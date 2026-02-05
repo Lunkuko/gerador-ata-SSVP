@@ -232,7 +232,7 @@ def gerar_pdf_nativo(dados):
     pdf.cell(0, 5, "__________________________________________________", ln=True, align="L")
     pdf.cell(0, 5, f"{dados['pres_nome']} (Presidente)", ln=True, align="L")
     
-    return pdf.output(dest='S').encode('latin-1')
+    return bytes(pdf.output(dest='S'))
 
 # ==============================================================================
 # 4. INTERFACE DO USUÁRIO (FRONTEND)
