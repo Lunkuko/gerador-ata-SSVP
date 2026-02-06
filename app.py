@@ -196,7 +196,7 @@ def gerar_pdf_nativo(dados):
     add_paragraph(f"A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros.")
     add_paragraph(f"A ata anterior foi lida e {dados['status_ata_ant']}.")
     add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']} e a ausência justificada: {dados['ausencias']}.")
-    visitantes_txt = f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve.")
+    visitantes_txt = f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve."
     add_paragraph(visitantes_txt)
     receita_txt = formatar_valor_extenso(dados['receita'])
     despesa_txt = formatar_valor_extenso(dados['despesa'])
