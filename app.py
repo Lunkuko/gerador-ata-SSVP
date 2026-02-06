@@ -6,7 +6,7 @@ from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fpdf import FPDF
 from num2words import num2words
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, time
 import io
 import urllib.parse
 
@@ -18,17 +18,16 @@ st.set_page_config(page_title="Gerador de Ata SSVP (Cloud)", layout="wide", page
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
-    st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe e está correto.")
+    st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe.")
     st.stop()
 
 def carregar_dados_cloud():
     try:
-        # TTL=0 garante dados frescos a cada recarga
         df_config = conn.read(worksheet="Config", ttl=0)
         df_membros = conn.read(worksheet="Membros", ttl=0)
         df_anos = conn.read(worksheet="Anos", ttl=0)
     except Exception:
-        st.error("Erro ao ler abas. Verifique se 'Config', 'Membros' e 'Anos' existem na planilha.")
+        st.error("Erro ao ler abas. Verifique se 'Config', 'Membros' e 'Anos' existem.")
         st.stop()
     
     config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
@@ -42,6 +41,18 @@ def carregar_dados_cloud():
         "membros": df_membros['Nome'].dropna().tolist(),
         "anos": df_anos['Ano'].dropna().tolist()
     }
+
+def obter_saldo_anterior():
+    """Busca o último saldo gravado na aba Historico."""
+    try:
+        df_hist = conn.read(worksheet="Historico", ttl=0)
+        if not df_hist.empty and 'Saldo' in df_hist.columns:
+            # Pega o último valor válido. Se tiver vazio, retorna 0.0
+            ultimo_valor = df_hist['Saldo'].iloc[-1]
+            return float(ultimo_valor)
+    except Exception:
+        pass
+    return 0.0
 
 def atualizar_config_cloud(chave, valor):
     df = conn.read(worksheet="Config", ttl=0)
@@ -78,7 +89,7 @@ def salvar_historico_cloud(dados):
             "Secretario": dados['secretario_nome'],
             "Leitura": dados['leitura_fonte'],
             "Presentes": dados['lista_presentes_txt'],
-            "Ausencias": dados['ausencias'], # Nova coluna recomendada
+            "Ausencias": dados['ausencias'],
             "Visitantes": dados['lista_visitantes_txt'],
             "Receita": dados['receita'],
             "Despesa": dados['despesa'],
@@ -226,6 +237,7 @@ def gerar_pdf_nativo(dados):
 # ==============================================================================
 db = carregar_dados_cloud()
 prox_num_ata = db['config']['ultima_ata'] + 1
+saldo_anterior_db = obter_saldo_anterior() # Busca saldo anterior da nuvem
 
 # --- Cálculo dos Padrões ---
 dia_semana_cfg = db['config'].get('dia_semana_reuniao', None)
@@ -303,7 +315,7 @@ with st.sidebar:
 st.title("Gerador de Ata SSVP ✝️")
 st.caption("Conectado ao Arquivo Digital")
 
-# SEÇÃO 1: Identificação (Interativa)
+# SEÇÃO 1: Identificação
 col1, col2, col3 = st.columns(3)
 num_ata = col1.number_input("Número da Ata", value=prox_num_ata, step=1)
 ano_tematico = col2.selectbox("Ano Temático", db['anos'])
@@ -317,36 +329,18 @@ with st.expander(f"📍 Detalhes: {hora_padrao_str} - {local_padrao} (Clique par
 
 st.divider()
 
-# SEÇÃO 2: Chamada e Frequência (AGORA INTELIGENTE!)
-# Esta seção está FORA do formulário para atualizar instantaneamente
+# SEÇÃO 2: Chamada e Frequência (Inteligente)
 st.subheader("Chamada e Frequência")
 st.caption("Desmarque quem faltou. O sistema pedirá a justificativa automaticamente.")
-
 col_pres, col_aus = st.columns([2, 1])
-
 with col_pres:
-    # Por padrão, todos vêm marcados como Presentes
-    presentes = st.multiselect(
-        "Membros Presentes", 
-        db['membros'], 
-        default=db['membros']
-    )
-
-# Calcula quem faltou (Diferença entre a lista completa e os presentes)
+    presentes = st.multiselect("Membros Presentes", db['membros'], default=db['membros'])
 ausentes = [m for m in db['membros'] if m not in presentes]
 motivos_ausencia = {}
-
 with col_aus:
     if ausentes:
         st.markdown("**🛑 Ausências Detectadas:**")
-        # Pergunta quem justificou
-        justificaram = st.multiselect(
-            "Quem justificou?", 
-            ausentes,
-            placeholder="Selecione..."
-        )
-        
-        # Se alguém justificou, abre o campo para digitar o motivo
+        justificaram = st.multiselect("Quem justificou?", ausentes, placeholder="Selecione...")
         if justificaram:
             for membro in justificaram:
                 motivos_ausencia[membro] = st.text_input(f"Motivo: {membro}", placeholder="Ex: Trabalho, Doença", key=f"mot_{membro}")
@@ -355,8 +349,30 @@ with col_aus:
 
 st.divider()
 
-# SEÇÃO 3: Formulário para Textos Longos e Envio
-# Usamos st.form aqui para não recarregar a página enquanto você digita os textos longos
+# SEÇÃO 3: Tesouraria (AUTOMATIZADA!) 💰
+# Fora do formulário para ter cálculo em tempo real
+st.subheader("Tesouraria")
+c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
+
+# Mostra o saldo anterior recuperado (apenas visualização ou editável se precisar corrigir)
+st.caption(f"Saldo trazido da ata anterior: R$ {saldo_anterior_db:.2f}")
+
+receita = c_fin1.number_input("Receita (Entradas)", min_value=0.0, step=0.10)
+despesa = c_fin2.number_input("Despesa (Saídas)", min_value=0.0, step=0.10)
+decima = c_fin3.number_input("Décima (Opcional)", min_value=0.0, step=0.10)
+
+# CÁLCULO MÁGICO 🪄
+saldo_calculado = saldo_anterior_db + receita - despesa - decima
+
+# Campo final bloqueado para edição direta (força o cálculo estar certo)
+saldo = c_fin4.number_input("Saldo Final (Calculado)", value=saldo_calculado, disabled=True)
+
+if saldo < 0:
+    st.error("⚠️ Atenção: O caixa está negativo!")
+
+st.divider()
+
+# SEÇÃO 4: Textos (Dentro do Form)
 with st.form("form_ata_conteudo"):
     
     c_esp1, c_esp2, c_esp3 = st.columns(3)
@@ -366,17 +382,7 @@ with st.form("form_ata_conteudo"):
     
     st.divider()
     status_ata_ant = st.radio("Ata Anterior", ["Aprovada sem ressalvas", "Aprovada com ressalvas"], horizontal=True)
-    
-    # Visitantes (Separado da chamada de membros)
     visitantes = st.text_area("Visitantes (Nomes)", placeholder="Se houver visitantes, digite aqui...")
-    
-    st.divider()
-    st.markdown("### Tesouraria")
-    c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-    receita = c_fin1.number_input("Receita", 0.0, step=0.1)
-    despesa = c_fin2.number_input("Despesa", 0.0, step=0.1)
-    decima = c_fin3.number_input("Décima", 0.0, step=0.1)
-    saldo = c_fin4.number_input("Saldo", 0.0, step=0.1)
     
     st.divider()
     st.markdown("### Relatórios")
@@ -400,24 +406,21 @@ with st.form("form_ata_conteudo"):
     submit = st.form_submit_button("💾 Gerar Ata, Salvar Histórico e Baixar")
 
 if submit:
-    # Processa o texto das ausências
+    # Processa ausências
     lista_texto_ausencias = []
     if not ausentes:
         texto_ausencias = "Não houve."
     else:
         for m in ausentes:
             if m in motivos_ausencia and motivos_ausencia[m]:
-                # Se tem motivo, coloca entre parênteses
                 lista_texto_ausencias.append(f"{m} ({motivos_ausencia[m]})")
             elif m in motivos_ausencia:
-                 # Se marcou que justificou mas não escreveu nada
                 lista_texto_ausencias.append(f"{m} (Justificado)")
             else:
-                # Não justificado
                 lista_texto_ausencias.append(m)
         texto_ausencias = ", ".join(lista_texto_ausencias)
 
-    # 1. Dados
+    # Dados
     dados = {
         'num_ata': str(num_ata),
         'conf_nome': db['config'].get('nome_conf', ''),
@@ -432,9 +435,9 @@ if submit:
         'leitura_fonte': leitura_fonte, 'leitor_nome': leitor_nome,
         'status_ata_ant': status_ata_ant,
         'lista_presentes_txt': ", ".join(presentes),
-        'ausencias': texto_ausencias, # Campo processado automaticamente
+        'ausencias': texto_ausencias,
         'lista_visitantes_txt': visitantes.replace("\n", ", ") if visitantes else "",
-        'receita': receita, 'despesa': despesa, 'decima': decima, 'saldo': saldo,
+        'receita': receita, 'despesa': despesa, 'decima': decima, 'saldo': saldo, # Usa variáveis de fora do form
         'socioeconomico': socioeconomico, 'noticias_trabalhos': noticias,
         'escala_visitas': escala, 'palavra_franca': palavra,
         'expediente': expediente, 'palavra_visitantes': p_vis,
@@ -444,25 +447,21 @@ if submit:
         'cidade_estado': cidade_estado
     }
     
-    # 2. Salva no Histórico do Sheets
     with st.spinner("Arquivando ata na nuvem..."):
         if salvar_historico_cloud(dados):
             st.toast("✅ Ata salva no Histórico com sucesso!")
         
-    # 3. Atualiza Contador
     if num_ata > db['config']['ultima_ata']:
         atualizar_config_cloud('ultima_ata', int(num_ata))
     
-    # 4. Gera Arquivos
     doc = gerar_docx(dados)
     bio_docx = io.BytesIO()
     doc.save(bio_docx)
     pdf_bytes = gerar_pdf_nativo(dados)
     
-    st.success(f"Ata nº {num_ata} gerada e arquivada!")
+    st.success(f"Ata nº {num_ata} gerada e arquivada! Novo saldo: R$ {saldo:.2f}")
     
-    # 5. WhatsApp
-    texto_zap = f"*Ata nº {num_ata} - SSVP* ✝️\n📅 {formatar_data_br(data_reuniao)}\n💰 Coleta: R$ {receita:.2f}\n🚫 Ausências: {texto_ausencias}"
+    texto_zap = f"*Ata nº {num_ata} - SSVP* ✝️\n📅 {formatar_data_br(data_reuniao)}\n💰 Receita: R$ {receita:.2f}\n📉 Saldo Final: R$ {saldo:.2f}\n🚫 Ausências: {texto_ausencias}"
     link_zap = f"https://api.whatsapp.com/send?text={urllib.parse.quote(texto_zap)}"
     st.link_button("📲 Enviar Resumo no WhatsApp", link_zap)
     
