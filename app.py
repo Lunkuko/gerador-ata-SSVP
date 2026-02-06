@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+from st_gsheets_connection import GSheetsConnection
 import pandas as pd
 from docx import Document
 from docx.shared import Pt
@@ -18,16 +18,17 @@ st.set_page_config(page_title="Gerador de Ata SSVP (Cloud)", layout="wide", page
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
-    st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe.")
+    st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe e está correto.")
     st.stop()
 
 def carregar_dados_cloud():
     try:
+        # TTL=0 garante dados frescos a cada recarga
         df_config = conn.read(worksheet="Config", ttl=0)
         df_membros = conn.read(worksheet="Membros", ttl=0)
         df_anos = conn.read(worksheet="Anos", ttl=0)
     except Exception:
-        st.error("Erro ao ler abas. Verifique se 'Config', 'Membros' e 'Anos' existem.")
+        st.error("Erro ao ler abas. Verifique se 'Config', 'Membros' e 'Anos' existem na planilha.")
         st.stop()
     
     config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
@@ -77,6 +78,7 @@ def salvar_historico_cloud(dados):
             "Secretario": dados['secretario_nome'],
             "Leitura": dados['leitura_fonte'],
             "Presentes": dados['lista_presentes_txt'],
+            "Ausencias": dados['ausencias'], # Nova coluna recomendada
             "Visitantes": dados['lista_visitantes_txt'],
             "Receita": dados['receita'],
             "Despesa": dados['despesa'],
@@ -97,22 +99,20 @@ def salvar_historico_cloud(dados):
 # 2. LÓGICA DE DATAS AUTOMÁTICAS
 # ==============================================================================
 def obter_proxima_data(dia_semana_alvo):
-    """
-    Calcula a próxima data baseada no dia da semana configurado.
-    0=Segunda, 1=Terça, ..., 6=Domingo
-    """
     if dia_semana_alvo is None or dia_semana_alvo == "":
         return datetime.now().date()
     
-    dia_semana_alvo = int(dia_semana_alvo)
+    try:
+        dia_semana_alvo = int(dia_semana_alvo)
+    except:
+        return datetime.now().date()
+
     hoje = datetime.now().date()
     dia_hoje = hoje.weekday()
     
-    # Se hoje é o dia da reunião, retorna hoje
     if dia_hoje == dia_semana_alvo:
         return hoje
     
-    # Se não, calcula quantos dias faltam para o próximo
     dias_para_adicionar = (dia_semana_alvo - dia_hoje + 7) % 7
     return hoje + timedelta(days=dias_para_adicionar)
 
@@ -228,7 +228,7 @@ db = carregar_dados_cloud()
 prox_num_ata = db['config']['ultima_ata'] + 1
 
 # --- Cálculo dos Padrões ---
-dia_semana_cfg = db['config'].get('dia_semana_reuniao', None) # 0-6
+dia_semana_cfg = db['config'].get('dia_semana_reuniao', None)
 data_padrao = obter_proxima_data(dia_semana_cfg)
 
 hora_padrao_str = db['config'].get('horario_padrao', '20:00')
@@ -248,7 +248,6 @@ with st.sidebar:
         
         cfg_nome = st.text_input("Nome da Conferência", db['config'].get('nome_conf', ''))
         
-        # Novos Campos de Configuração
         dias_semana = {0: "Segunda", 1: "Terça", 2: "Quarta", 3: "Quinta", 4: "Sexta", 5: "Sábado", 6: "Domingo"}
         idx_dia = int(dia_semana_cfg) if dia_semana_cfg is not None and str(dia_semana_cfg).isdigit() else 0
         cfg_dia = st.selectbox("Dia da Semana Padrão", options=list(dias_semana.keys()), format_func=lambda x: dias_semana[x], index=idx_dia)
@@ -300,26 +299,66 @@ with st.sidebar:
         atualizar_config_cloud('ultima_ata', nova_contagem)
         st.rerun()
 
-# --- FORMULÁRIO ---
+# --- INTERFACE PRINCIPAL ---
 st.title("Gerador de Ata SSVP ✝️")
 st.caption("Conectado ao Arquivo Digital")
 
-with st.form("form_ata"):
-    col1, col2, col3 = st.columns(3)
-    num_ata = col1.number_input("Número da Ata", value=prox_num_ata, step=1)
-    ano_tematico = col2.selectbox("Ano Temático", db['anos'])
+# SEÇÃO 1: Identificação (Interativa)
+col1, col2, col3 = st.columns(3)
+num_ata = col1.number_input("Número da Ata", value=prox_num_ata, step=1)
+ano_tematico = col2.selectbox("Ano Temático", db['anos'])
+data_reuniao = col3.date_input("Data da Reunião", data_padrao, format="DD/MM/YYYY")
+
+with st.expander(f"📍 Detalhes: {hora_padrao_str} - {local_padrao} (Clique para alterar)", expanded=False):
+    c_loc1, c_loc2, c_loc3 = st.columns(3)
+    hora_inicio = c_loc1.time_input("Horário Início", hora_padrao)
+    local = c_loc2.text_input("Local", local_padrao)
+    cidade_estado = c_loc3.text_input("Cidade/UF", cidade_padrao)
+
+st.divider()
+
+# SEÇÃO 2: Chamada e Frequência (AGORA INTELIGENTE!)
+# Esta seção está FORA do formulário para atualizar instantaneamente
+st.subheader("Chamada e Frequência")
+st.caption("Desmarque quem faltou. O sistema pedirá a justificativa automaticamente.")
+
+col_pres, col_aus = st.columns([2, 1])
+
+with col_pres:
+    # Por padrão, todos vêm marcados como Presentes
+    presentes = st.multiselect(
+        "Membros Presentes", 
+        db['membros'], 
+        default=db['membros']
+    )
+
+# Calcula quem faltou (Diferença entre a lista completa e os presentes)
+ausentes = [m for m in db['membros'] if m not in presentes]
+motivos_ausencia = {}
+
+with col_aus:
+    if ausentes:
+        st.markdown("**🛑 Ausências Detectadas:**")
+        # Pergunta quem justificou
+        justificaram = st.multiselect(
+            "Quem justificou?", 
+            ausentes,
+            placeholder="Selecione..."
+        )
+        
+        # Se alguém justificou, abre o campo para digitar o motivo
+        if justificaram:
+            for membro in justificaram:
+                motivos_ausencia[membro] = st.text_input(f"Motivo: {membro}", placeholder="Ex: Trabalho, Doença", key=f"mot_{membro}")
+    else:
+        st.success("Todos presentes! 🎉")
+
+st.divider()
+
+# SEÇÃO 3: Formulário para Textos Longos e Envio
+# Usamos st.form aqui para não recarregar a página enquanto você digita os textos longos
+with st.form("form_ata_conteudo"):
     
-    # DATA AUTOMÁTICA
-    data_reuniao = col3.date_input("Data da Reunião", data_padrao)
-    
-    # --- ÁREA "PRESA" (Expandir para editar) ---
-    with st.expander(f"📍 Detalhes: {hora_padrao_str} - {local_padrao} (Clique para alterar)", expanded=False):
-        c_loc1, c_loc2, c_loc3 = st.columns(3)
-        hora_inicio = c_loc1.time_input("Horário Início", hora_padrao)
-        local = c_loc2.text_input("Local", local_padrao)
-        cidade_estado = c_loc3.text_input("Cidade/UF", cidade_padrao)
-    
-    st.divider()
     c_esp1, c_esp2, c_esp3 = st.columns(3)
     pres_nome = c_esp1.selectbox("Presidente", db['membros'])
     leitura_fonte = c_esp2.text_input("Fonte Leitura")
@@ -327,11 +366,12 @@ with st.form("form_ata"):
     
     st.divider()
     status_ata_ant = st.radio("Ata Anterior", ["Aprovada sem ressalvas", "Aprovada com ressalvas"], horizontal=True)
-    presentes = st.multiselect("Presentes", db['membros'], default=db['membros'])
-    ausencias = st.text_input("Ausências")
-    visitantes = st.text_area("Visitantes")
+    
+    # Visitantes (Separado da chamada de membros)
+    visitantes = st.text_area("Visitantes (Nomes)", placeholder="Se houver visitantes, digite aqui...")
     
     st.divider()
+    st.markdown("### Tesouraria")
     c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
     receita = c_fin1.number_input("Receita", 0.0, step=0.1)
     despesa = c_fin2.number_input("Despesa", 0.0, step=0.1)
@@ -339,6 +379,7 @@ with st.form("form_ata"):
     saldo = c_fin4.number_input("Saldo", 0.0, step=0.1)
     
     st.divider()
+    st.markdown("### Relatórios")
     socioeconomico = st.text_area("Socioeconômico", height=100)
     noticias = st.text_area("Notícias / Visitas", height=100)
     escala = st.text_area("Escala Próxima Semana")
@@ -359,6 +400,23 @@ with st.form("form_ata"):
     submit = st.form_submit_button("💾 Gerar Ata, Salvar Histórico e Baixar")
 
 if submit:
+    # Processa o texto das ausências
+    lista_texto_ausencias = []
+    if not ausentes:
+        texto_ausencias = "Não houve."
+    else:
+        for m in ausentes:
+            if m in motivos_ausencia and motivos_ausencia[m]:
+                # Se tem motivo, coloca entre parênteses
+                lista_texto_ausencias.append(f"{m} ({motivos_ausencia[m]})")
+            elif m in motivos_ausencia:
+                 # Se marcou que justificou mas não escreveu nada
+                lista_texto_ausencias.append(f"{m} (Justificado)")
+            else:
+                # Não justificado
+                lista_texto_ausencias.append(m)
+        texto_ausencias = ", ".join(lista_texto_ausencias)
+
     # 1. Dados
     dados = {
         'num_ata': str(num_ata),
@@ -374,7 +432,7 @@ if submit:
         'leitura_fonte': leitura_fonte, 'leitor_nome': leitor_nome,
         'status_ata_ant': status_ata_ant,
         'lista_presentes_txt': ", ".join(presentes),
-        'ausencias': ausencias,
+        'ausencias': texto_ausencias, # Campo processado automaticamente
         'lista_visitantes_txt': visitantes.replace("\n", ", ") if visitantes else "",
         'receita': receita, 'despesa': despesa, 'decima': decima, 'saldo': saldo,
         'socioeconomico': socioeconomico, 'noticias_trabalhos': noticias,
@@ -404,7 +462,7 @@ if submit:
     st.success(f"Ata nº {num_ata} gerada e arquivada!")
     
     # 5. WhatsApp
-    texto_zap = f"*Ata nº {num_ata} - SSVP* ✝️\n📅 {formatar_data_br(data_reuniao)}\n💰 Coleta: R$ {receita:.2f}\n📂 Arquivada no sistema."
+    texto_zap = f"*Ata nº {num_ata} - SSVP* ✝️\n📅 {formatar_data_br(data_reuniao)}\n💰 Coleta: R$ {receita:.2f}\n🚫 Ausências: {texto_ausencias}"
     link_zap = f"https://api.whatsapp.com/send?text={urllib.parse.quote(texto_zap)}"
     st.link_button("📲 Enviar Resumo no WhatsApp", link_zap)
     
