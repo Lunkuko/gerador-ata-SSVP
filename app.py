@@ -41,7 +41,7 @@ def carregar_dados_cloud():
             erro_str = str(e)
             if "429" in erro_str or "Quota exceeded" in erro_str:
                 tentativas += 1
-                time.sleep(2 ** tentativas) # Espera exponencialmente (2s, 4s, 8s)
+                time.sleep(2 ** tentativas)
                 if tentativas == max_tentativas:
                     st.error(f"⚠️ O Google está sobrecarregado (Erro 429). Aguarde 1 minuto e recarregue a página.")
                     st.stop()
@@ -49,7 +49,6 @@ def carregar_dados_cloud():
                 st.error(f"Erro técnico ao ler dados: {e}")
                 st.stop()
 
-    # Tratamento de listas vazias
     if df_membros.empty:
         lista_membros = []
     else:
@@ -60,7 +59,6 @@ def carregar_dados_cloud():
     else:
         lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
 
-    # Processa Configurações
     config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
     try:
         config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
@@ -72,6 +70,21 @@ def carregar_dados_cloud():
         "membros": lista_membros,
         "anos": lista_anos
     }
+
+def buscar_ata_para_edicao(num_ata_busca):
+    """Busca uma ata específica no histórico para preencher o formulário."""
+    try:
+        df_hist = conn.read(worksheet="Historico")
+        # Filtra pelo número da ata (converte para string para garantir igualdade)
+        ata_encontrada = df_hist[df_hist['Numero'].astype(str) == str(num_ata_busca)]
+        
+        if not ata_encontrada.empty:
+            # Retorna a primeira ocorrência como dicionário
+            return ata_encontrada.iloc[0].to_dict()
+        return None
+    except Exception as e:
+        st.error(f"Erro ao buscar ata: {e}")
+        return None
 
 def obter_saldo_anterior():
     """Pega o saldo da última ata no histórico. Se não houver, retorna 0.0."""
@@ -90,8 +103,7 @@ def limpar_memoria():
     st.cache_data.clear()
 
 def atualizar_config_cloud(chave, valor):
-    """Salva uma configuração específica na aba Config."""
-    time.sleep(1) # Pausa de segurança
+    time.sleep(1) 
     df = conn.read(worksheet="Config")
     str_valor = str(valor)
     
@@ -104,7 +116,6 @@ def atualizar_config_cloud(chave, valor):
     limpar_memoria()
 
 def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
-    """Adiciona ou remove itens das listas (Membros/Anos)."""
     time.sleep(1)
     df = conn.read(worksheet=aba)
     sucesso = False
@@ -124,11 +135,17 @@ def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
     return sucesso
 
 def salvar_historico_cloud(dados):
-    """Salva o resumo da ata na aba Historico."""
+    """Salva ou ATUALIZA o resumo da ata na aba Historico."""
     try:
         df_hist = conn.read(worksheet="Historico")
-        nova_linha = pd.DataFrame([{
-            "Numero": dados['num_ata'],
+        
+        # Converte a coluna Numero para string para comparação segura
+        df_hist['Numero'] = df_hist['Numero'].astype(str)
+        num_atual = str(dados['num_ata'])
+        
+        # Cria a linha de dados
+        nova_linha = {
+            "Numero": num_atual,
             "Data": dados['data_reuniao'],
             "Presidente": dados['pres_nome'],
             "Secretario": dados['secretario_nome'],
@@ -142,13 +159,27 @@ def salvar_historico_cloud(dados):
             "Socioeconomico": dados['socioeconomico'],
             "Noticias": dados['noticias_trabalhos'],
             "Palavra_Franca": dados['palavra_franca']
-        }])
-        df_atualizado = pd.concat([df_hist, nova_linha], ignore_index=True)
+        }
+
+        # Verifica se já existe (Edição) ou se é Novo
+        if num_atual in df_hist['Numero'].values:
+            # ATUALIZAÇÃO: Encontra o índice e substitui
+            idx = df_hist.index[df_hist['Numero'] == num_atual].tolist()[0]
+            for col, val in nova_linha.items():
+                df_hist.at[idx, col] = val
+            df_atualizado = df_hist
+            msg_tipo = "atualizada"
+        else:
+            # INSERÇÃO: Adiciona nova linha
+            df_nova = pd.DataFrame([nova_linha])
+            df_atualizado = pd.concat([df_hist, df_nova], ignore_index=True)
+            msg_tipo = "criada"
+
         conn.update(worksheet="Historico", data=df_atualizado)
-        return True
+        return True, msg_tipo
     except Exception as e:
         st.error(f"Erro ao salvar no histórico: {e}")
-        return False
+        return False, "erro"
 
 # ==============================================================================
 # 3. UTILITÁRIOS (DATA, TEXTO, PDF, DOCX)
@@ -169,9 +200,11 @@ def obter_proxima_data(dia_semana_alvo):
 
 def get_index_membro(nome_alvo, lista_membros):
     try:
-        return lista_membros.index(nome_alvo)
+        if nome_alvo and nome_alvo in lista_membros:
+            return lista_membros.index(nome_alvo)
     except:
-        return 0
+        pass
+    return 0
 
 def formatar_valor_extenso(valor):
     try:
@@ -334,10 +367,10 @@ def gerar_pdf_nativo(dados):
 # 4. APP PRINCIPAL
 # ==============================================================================
 db = carregar_dados_cloud()
-prox_num_ata = db['config']['ultima_ata'] + 1
 
-# CORREÇÃO AQUI: Removemos o argumento da função
-saldo_anterior_db = obter_saldo_anterior()
+# --- ESTADO DE SESSÃO (Para carregar dados antigos) ---
+if 'dados_carregados' not in st.session_state:
+    st.session_state.dados_carregados = {}
 
 # --- Recupera Configurações Padrão ---
 dia_semana_cfg = db['config'].get('dia_semana_reuniao', None)
@@ -361,32 +394,38 @@ cidade_padrao = db['config'].get('cidade_padrao', 'Belo Horizonte - MG')
 with st.sidebar:
     st.header("⚙️ Painel de Controle")
     
+    # --- NOVO: Módulo de Correção ---
+    with st.expander("🛠️ Corrigir Ata Anterior", expanded=True):
+        st.info("Digite o número da ata antiga para editar.")
+        num_busca = st.number_input("Nº da Ata", min_value=1, step=1, key="busca_ata")
+        if st.button("Carregar para Edição"):
+            dados_antigos = buscar_ata_para_edicao(num_busca)
+            if dados_antigos:
+                st.session_state.dados_carregados = dados_antigos
+                st.toast(f"✅ Ata {num_busca} carregada! Edite no formulário.")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("Ata não encontrada no histórico.")
+
     # 1. Cargos (2 Secretários)
-    with st.expander("👔 Cargos e Funções (Padrões)"):
-        st.info("Defina quem ocupa os cargos atualmente.")
-        
+    with st.expander("👔 Cargos e Funções"):
         idx_p = get_index_membro(pres_padrao_nome, db['membros'])
         cfg_pres = st.selectbox("Presidente", db['membros'], index=idx_p, key="kp")
         
         st.divider()
-        
-        # 1º Secretário
         idx_s1 = get_index_membro(sec_padrao_nome, db['membros'])
         cfg_sec1 = st.selectbox("1º Secretário(a)", db['membros'], index=idx_s1, key="ks1")
         cfg_sec1_cargo = st.text_input("Cargo (ex: 1º Secretário)", value=sec_padrao_cargo, key="ksc1")
         
         st.divider()
-
-        # 2º Secretário
         sec2_nome_cfg = db['config'].get('sec2_padrao', None)
         sec2_cargo_cfg = db['config'].get('sec2_cargo_padrao', '2º Secretário(a)')
         idx_s2 = get_index_membro(sec2_nome_cfg, db['membros'])
-        
         cfg_sec2 = st.selectbox("2º Secretário(a)", db['membros'], index=idx_s2, key="ks2")
         cfg_sec2_cargo = st.text_input("Cargo (ex: 2º Secretário)", value=sec2_cargo_cfg, key="ksc2")
         
         st.divider()
-        
         idx_t = get_index_membro(tes_padrao_nome, db['membros'])
         cfg_tes = st.selectbox("Tesoureiro(a)", db['membros'], index=idx_t, key="kt")
         
@@ -466,11 +505,29 @@ with st.sidebar:
 st.title("Gerador de Ata SSVP ✝️")
 st.caption("Conectado ao Arquivo Digital")
 
-# SEÇÃO 1: Identificação
+# SEÇÃO 1: Identificação (Com suporte a carregamento)
+dc = st.session_state.dados_carregados # Atalho
+
+# Define valores padrão (Se tiver carregado, usa. Se não, usa padrão)
+val_num = int(dc.get('Numero', db['config']['ultima_ata'] + 1))
+val_ano = dc.get('Ano', db['anos'][0] if db['anos'] else "")
+# Data: converter string do banco para date object
+val_data = data_padrao
+if 'Data' in dc:
+    try:
+        val_data = datetime.strptime(dc['Data'], '%d/%m/%Y').date()
+    except:
+        pass
+
 col1, col2, col3 = st.columns(3)
-num_ata = col1.number_input("Número da Ata", value=prox_num_ata, step=1)
-ano_tematico = col2.selectbox("Ano Temático", db['anos'])
-data_reuniao = col3.date_input("Data da Reunião", data_padrao, format="DD/MM/YYYY")
+num_ata = col1.number_input("Número da Ata", value=val_num, step=1)
+if dc: st.caption(f"✏️ Editando Ata nº {val_num}") # Aviso visual
+
+idx_ano = 0
+if 'Ano' in dc and dc['Ano'] in db['anos']:
+    idx_ano = db['anos'].index(dc['Ano'])
+ano_tematico = col2.selectbox("Ano Temático", db['anos'], index=idx_ano)
+data_reuniao = col3.date_input("Data da Reunião", val_data, format="DD/MM/YYYY")
 
 with st.expander(f"📍 Detalhes: {hora_padrao_str} - {local_padrao} (Clique para alterar)", expanded=False):
     c_loc1, c_loc2, c_loc3 = st.columns(3)
@@ -480,16 +537,22 @@ with st.expander(f"📍 Detalhes: {hora_padrao_str} - {local_padrao} (Clique par
 
 st.divider()
 
-# SEÇÃO 2: Chamada (Funil)
+# SEÇÃO 2: Chamada (Com carga de dados)
 st.subheader("Chamada e Frequência")
 col_pres, col_just = st.columns(2)
+
+# Recupera presentes se estiver editando
+def_presentes = []
+if 'Presentes' in dc:
+    # O banco salva "João, Maria, José". Convertemos para lista.
+    def_presentes = [p.strip() for p in dc['Presentes'].split(',') if p.strip() in db['membros']]
 
 with col_pres:
     st.markdown("##### 1️⃣ Quem está presente?")
     presentes = st.multiselect(
         "Selecione os presentes:", 
         db['membros'], 
-        default=[], 
+        default=def_presentes, 
         placeholder="Selecione os nomes...",
         label_visibility="collapsed"
     )
@@ -523,13 +586,24 @@ st.divider()
 st.subheader("Tesouraria")
 c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
 
-st.caption(f"Saldo trazido da ata anterior: R$ {saldo_anterior_db:.2f}")
+# Busca saldo (Se editando, pega do histórico. Se nova, calcula)
+saldo_anterior_db = obter_saldo_anterior()
 
-receita = c_fin1.number_input("Receita (Entradas)", min_value=0.0, step=0.10)
-despesa = c_fin2.number_input("Despesa (Saídas)", min_value=0.0, step=0.10)
+st.caption(f"Saldo Anterior (Último registro): R$ {saldo_anterior_db:.2f}")
+
+# Valores carregados ou zero
+val_rec = float(dc.get('Receita', 0.0))
+val_desp = float(dc.get('Despesa', 0.0))
+val_dec = float(dc.get('Decima', 0.0)) # Note: No banco talvez não tenha salvo 'Decima' separado antes, cuidado.
+# Se estiver editando, o saldo anterior daquela ata específica não é fácil de saber sem refazer a conta inversa.
+# Para simplificar: No modo edição, o usuário insere o que quiser.
+
+receita = c_fin1.number_input("Receita (Entradas)", value=val_rec, step=0.10)
+despesa = c_fin2.number_input("Despesa (Saídas)", value=val_desp, step=0.10)
 decima = c_fin3.number_input("Décima (Opcional)", min_value=0.0, step=0.10)
 
 saldo_calculado = saldo_anterior_db + receita - despesa - decima
+# Se estiver editando, mostramos o saldo que foi salvo, mas recalculamos baseado na edição atual
 saldo = c_fin4.number_input("Saldo Final (Calculado)", value=saldo_calculado, disabled=True)
 
 idx_tesoureiro = get_index_membro(tes_padrao_nome, db['membros'])
@@ -540,15 +614,16 @@ if saldo < 0:
 
 st.divider()
 
-# SEÇÃO 4: Textos (SEM ST.FORM)
+# SEÇÃO 4: Textos
 c_esp1, c_esp2, c_esp3 = st.columns(3)
-idx_presidente = get_index_membro(pres_padrao_nome, db['membros'])
-pres_nome = c_esp1.selectbox("Presidente", db['membros'], index=idx_presidente)
+idx_pres_atual = get_index_membro(dc.get('Presidente', pres_padrao_nome), db['membros'])
+pres_nome = c_esp1.selectbox("Presidente", db['membros'], index=idx_pres_atual)
 
-leitura_fonte = c_esp2.text_input("Fonte Leitura")
+val_leitura = dc.get('Leitura', "")
+leitura_fonte = c_esp2.text_input("Fonte Leitura", value=val_leitura)
 leitor_nome = c_esp3.selectbox("Leitor", db['membros'])
 
-# --- ATA ANTERIOR COM RESSALVA AUTOMÁTICA ---
+# --- ATA ANTERIOR ---
 st.divider()
 c_ata_opt, c_ata_txt = st.columns([1, 2])
 with c_ata_opt:
@@ -560,15 +635,16 @@ with c_ata_txt:
         texto_ressalva = st.text_input("Detalhes da Ressalva", placeholder="Ex: Correção no valor de R$ 10,00...")
 
 st.divider()
-visitantes = st.text_area("Visitantes (Nomes)", placeholder="Se houver visitantes, digite aqui...")
+val_vis = dc.get('Visitantes', "")
+visitantes = st.text_area("Visitantes (Nomes)", value=val_vis, placeholder="Se houver visitantes, digite aqui...")
 
 st.divider()
 st.markdown("### Relatórios")
-socioeconomico = st.text_area("Socioeconômico", height=100)
-noticias = st.text_area("Notícias / Visitas", height=100)
-escala = st.text_area("Escala Próxima Semana")
-palavra = st.text_area("Palavra Franca")
-expediente = st.text_area("Expediente")
+socioeconomico = st.text_area("Socioeconômico", value=dc.get('Socioeconomico', ""), height=100)
+noticias = st.text_area("Notícias / Visitas", value=dc.get('Noticias', ""), height=100)
+escala = st.text_area("Escala Próxima Semana", value=dc.get('Escala', "")) # Se não tiver no banco, vem vazio
+palavra = st.text_area("Palavra Franca", value=dc.get('Palavra_Franca', ""))
+expediente = st.text_area("Expediente", value=dc.get('Expediente', ""))
 
 st.divider()
 col_enc1, col_enc2 = st.columns(2)
@@ -578,7 +654,7 @@ col_enc3, col_enc4 = st.columns(2)
 musica = col_enc3.text_input("Música", "Hino de Ozanam")
 hora_fim = col_enc4.time_input("Fim")
 
-# --- ASSINATURA AUTOMÁTICA ---
+# --- ASSINATURA ---
 st.divider()
 st.markdown("##### ✍️ Assinatura da Ata")
 
@@ -598,16 +674,18 @@ elif quem_assinou == "2º Secretário":
     idx_selecionado = get_index_membro(nome_sec2, db['membros'])
     cargo_final = "2º Secretário(a)"
 else:
-    idx_selecionado = 0
+    # Tenta manter quem veio do banco se estiver editando
+    idx_selecionado = get_index_membro(dc.get('Secretario', ""), db['membros'])
     cargo_final = "Secretário(a) ad hoc"
 
 col_s1, col_s2 = st.columns([2, 1])
 sec_nome = col_s1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_selecionado)
 col_s2.text_input("Cargo na Ata (Automático)", value=cargo_final, disabled=True)
 
-# BOTÃO FORA DO FORMULÁRIO
+# BOTÃO FINAL
 st.divider()
-submit = st.button("💾 Gerar Ata, Salvar Histórico e Baixar", type="primary")
+label_botao = "💾 Atualizar Ata Existente" if dc else "💾 Gerar Nova Ata"
+submit = st.button(label_botao, type="primary")
 
 if submit:
     lista_texto_ausencias = []
@@ -618,13 +696,12 @@ if submit:
             motivo = motivos_ausencia.get(m, "").strip()
             if motivo:
                 lista_texto_ausencias.append(f"{m} ({motivo})")
-            elif not motivo and m not in motivos_ausencia: # Se não justificou
+            elif not motivo and m not in motivos_ausencia: 
                 lista_texto_ausencias.append(m)
-            else: # Se justificou mas não escreveu (padrão Justificado)
+            else: 
                  lista_texto_ausencias.append(f"{m} (Justificado)")
         texto_ausencias = ", ".join(lista_texto_ausencias)
 
-    # Concatena ressalva se houver
     status_final = status_ata_ant
     if status_ata_ant == "Aprovada com ressalvas" and texto_ressalva:
         status_final += f": {texto_ressalva}"
@@ -657,23 +734,26 @@ if submit:
         'cidade_estado': cidade_estado
     }
     
-    with st.spinner("Arquivando ata na nuvem..."):
-        if salvar_historico_cloud(dados):
-            st.toast("✅ Ata salva no Histórico com sucesso!")
-        
-    if num_ata > db['config']['ultima_ata']:
-        atualizar_config_cloud('ultima_ata', int(num_ata))
-    
+    with st.spinner("Processando..."):
+        sucesso, tipo_op = salvar_historico_cloud(dados)
+        if sucesso:
+            if tipo_op == "atualizada":
+                st.toast(f"✅ Ata nº {num_ata} ATUALIZADA com sucesso!")
+            else:
+                st.toast(f"✅ Ata nº {num_ata} CRIADA com sucesso!")
+                # Só incrementa contador se for nova
+                if int(num_ata) > db['config']['ultima_ata']:
+                    atualizar_config_cloud('ultima_ata', int(num_ata))
+            
+            # Limpa estado de edição após salvar
+            st.session_state.dados_carregados = {}
+            
     doc = gerar_docx(dados)
     bio_docx = io.BytesIO()
     doc.save(bio_docx)
     pdf_bytes = gerar_pdf_nativo(dados)
     
-    st.success(f"Ata nº {num_ata} gerada e arquivada! Novo saldo: R$ {saldo:.2f}")
-    
-    texto_zap = f"*Ata nº {num_ata} - SSVP* ✝️\n📅 {formatar_data_br(data_reuniao)}\n💰 Receita: R$ {receita:.2f}\n📉 Saldo Final: R$ {saldo:.2f}\n🚫 Ausências: {texto_ausencias}"
-    link_zap = f"https://api.whatsapp.com/send?text={urllib.parse.quote(texto_zap)}"
-    st.link_button("📲 Enviar Resumo no WhatsApp", link_zap)
+    st.success(f"Documentos gerados! Saldo final: R$ {saldo:.2f}")
     
     col_d1, col_d2 = st.columns(2)
     with col_d1:
