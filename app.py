@@ -549,10 +549,38 @@ if quem_assinou == "1º Secretário":
     idx_selecionado = get_index_membro(nome_sec1, db['membros'])
     cargo_final = "1º Secretário(a)" # Cargo Fixo
     
+<<<<<<< HEAD
 elif quem_assinou == "2º Secretário":
     # Busca o índice do 2º Secretário na lista
     idx_selecionado = get_index_membro(nome_sec2, db['membros'])
     cargo_final = "2º Secretário(a)" # Cargo Fixo
+=======
+    st.divider()
+    st.markdown("##### ✍️ Assinatura da Ata")
+    
+    # Botão para trocar rapidamente entre 1º e 2º Secretário
+    quem_assinou = st.radio("Quem secretariou hoje?", ["1º Secretário", "2º Secretário", "Outro"], horizontal=True)
+
+    c_sec1, c_sec2 = st.columns(2)
+    
+    # Lógica Inteligente para preencher os campos
+    if quem_assinou == "1º Secretário":
+        idx_s_hoje = get_index_membro(sec_padrao_nome, db['membros'])
+        cargo_s_hoje = sec_padrao_cargo
+    elif quem_assinou == "2º Secretário":
+        # Busca os dados do 2º secretário direto da config
+        nome_s2 = db['config'].get('sec2_padrao', None)
+        cargo_s2 = db['config'].get('sec2_cargo_padrao', '2º Secretário(a)')
+        idx_s_hoje = get_index_membro(nome_s2, db['membros'])
+        cargo_s_hoje = cargo_s2
+    else:
+        idx_s_hoje = 0
+        cargo_s_hoje = "Secretário(a) ad hoc"
+
+    # Campos finais (já vêm preenchidos com a escolha acima)
+    sec_nome = c_sec1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_s_hoje)
+    sec_cargo = c_sec2.text_input("Cargo na Ata", cargo_s_hoje)
+>>>>>>> 9cdd482b02357f47b52e8476df1a06d15cfa1295
     
 else:
     # Se for "Outro", zera a seleção ou mantém o primeiro
