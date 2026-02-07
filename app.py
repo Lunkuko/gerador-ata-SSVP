@@ -21,30 +21,49 @@ except Exception as e:
     st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe.")
     st.stop()
 
+# --- CACHE INTELIGENTE ---
+# O ttl=3600 diz: "Se ninguém mexer, guarda esses dados por 1 hora na memória"
+@st.cache_data(ttl=3600)
 def carregar_dados_cloud():
     try:
-        df_config = conn.read(worksheet="Config", ttl=0)
-        df_membros = conn.read(worksheet="Membros", ttl=0)
-        df_anos = conn.read(worksheet="Anos", ttl=0)
-    except Exception:
-        st.error("Erro ao ler abas. Verifique se 'Config', 'Membros' e 'Anos' existem.")
-        st.stop()
-    
-    config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
-    try:
-        config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
-    except:
-        config_dict['ultima_ata'] = 0
+        # Aqui tiramos o ttl=0 para ele usar o cache interno da conexão também se precisar
+        df_config = conn.read(worksheet="Config")
+        df_membros = conn.read(worksheet="Membros")
+        df_anos = conn.read(worksheet="Anos")
+        
+        # Tratamento de erro se vier vazio
+        if df_membros.empty:
+            lista_membros = []
+        else:
+            lista_membros = df_membros['Nome'].dropna().astype(str).tolist()
+            
+        if df_anos.empty:
+            lista_anos = []
+        else:
+            lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
 
-    return {
-        "config": config_dict,
-        "membros": df_membros['Nome'].dropna().tolist(),
-        "anos": df_anos['Ano'].dropna().tolist()
-    }
+        # Processa Configuração
+        config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
+        try:
+            config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
+        except:
+            config_dict['ultima_ata'] = 0
+
+        return {
+            "config": config_dict,
+            "membros": lista_membros,
+            "anos": lista_anos
+        }
+    except Exception as e:
+        # Se der erro de limite, limpamos o cache para tentar de novo limpo na próxima
+        st.cache_data.clear()
+        st.error(f"Erro ao carregar dados: {e}")
+        st.stop()
 
 def obter_saldo_anterior():
+    # Saldo não precisa de cache agressivo, mas podemos proteger também
     try:
-        df_hist = conn.read(worksheet="Historico", ttl=0)
+        df_hist = conn.read(worksheet="Historico")
         if not df_hist.empty and 'Saldo' in df_hist.columns:
             ultimo_valor = df_hist['Saldo'].iloc[-1]
             return float(ultimo_valor)
@@ -52,34 +71,42 @@ def obter_saldo_anterior():
         pass
     return 0.0
 
+def limpar_memoria():
+    """Força o sistema a baixar os dados do Google novamente."""
+    carregar_dados_cloud.clear()
+    st.cache_data.clear()
+
 def atualizar_config_cloud(chave, valor):
-    df = conn.read(worksheet="Config", ttl=0)
+    df = conn.read(worksheet="Config")
     if chave in df['Chave'].values:
         df.loc[df['Chave'] == chave, 'Valor'] = str(valor)
     else:
         new_row = pd.DataFrame([{'Chave': chave, 'Valor': str(valor)}])
         df = pd.concat([df, new_row], ignore_index=True)
     conn.update(worksheet="Config", data=df)
-    st.cache_data.clear()
+    limpar_memoria() # Importante: Limpa a memória para ver a mudança
 
 def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
-    df = conn.read(worksheet=aba, ttl=0)
+    df = conn.read(worksheet=aba)
+    sucesso = False
     if acao == "adicionar":
         if valor not in df[coluna].values:
             new_row = pd.DataFrame([{coluna: valor}])
             df = pd.concat([df, new_row], ignore_index=True)
             conn.update(worksheet=aba, data=df)
-            return True
+            sucesso = True
     elif acao == "remover":
         df = df[df[coluna] != valor]
         conn.update(worksheet=aba, data=df)
-        return True
-    st.cache_data.clear()
-    return False
+        sucesso = True
+    
+    if sucesso:
+        limpar_memoria() # Força recarga
+    return sucesso
 
 def salvar_historico_cloud(dados):
     try:
-        df_hist = conn.read(worksheet="Historico", ttl=0)
+        df_hist = conn.read(worksheet="Historico")
         nova_linha = pd.DataFrame([{
             "Numero": dados['num_ata'],
             "Data": dados['data_reuniao'],
@@ -98,7 +125,7 @@ def salvar_historico_cloud(dados):
         }])
         df_atualizado = pd.concat([df_hist, nova_linha], ignore_index=True)
         conn.update(worksheet="Historico", data=df_atualizado)
-        st.cache_data.clear()
+        # Não precisamos limpar memória aqui se não formos ler o histórico imediatamente
         return True
     except Exception as e:
         st.error(f"Erro ao salvar no histórico: {e}")
@@ -110,18 +137,14 @@ def salvar_historico_cloud(dados):
 def obter_proxima_data(dia_semana_alvo):
     if dia_semana_alvo is None or dia_semana_alvo == "":
         return datetime.now().date()
-    
     try:
         dia_semana_alvo = int(dia_semana_alvo)
     except:
         return datetime.now().date()
-
     hoje = datetime.now().date()
     dia_hoje = hoje.weekday()
-    
     if dia_hoje == dia_semana_alvo:
         return hoje
-    
     dias_para_adicionar = (dia_semana_alvo - dia_hoje + 7) % 7
     return hoje + timedelta(days=dias_para_adicionar)
 
@@ -233,7 +256,7 @@ def gerar_pdf_nativo(dados):
 # ==============================================================================
 # 4. APP PRINCIPAL
 # ==============================================================================
-db = carregar_dados_cloud()
+db = carregar_dados_cloud() # Agora usa cache!
 prox_num_ata = db['config']['ultima_ata'] + 1
 saldo_anterior_db = obter_saldo_anterior()
 
@@ -287,6 +310,7 @@ with st.sidebar:
             st.rerun()
 
     with st.expander("👥 Membros"):
+        st.caption("Use com moderação para não travar o Google.")
         novo_membro = st.text_input("Novo Membro")
         if st.button("Adicionar"):
             if gerenciar_lista_cloud("Membros", "Nome", novo_membro, "adicionar"):
@@ -309,6 +333,10 @@ with st.sidebar:
         atualizar_config_cloud('ultima_ata', nova_contagem)
         st.rerun()
 
+    if st.button("🔄 Atualizar Dados da Nuvem"):
+        limpar_memoria()
+        st.rerun()
+
 # --- INTERFACE PRINCIPAL ---
 st.title("Gerador de Ata SSVP ✝️")
 st.caption("Conectado ao Arquivo Digital")
@@ -327,11 +355,10 @@ with st.expander(f"📍 Detalhes: {hora_padrao_str} - {local_padrao} (Clique par
 
 st.divider()
 
-# SEÇÃO 2: Chamada (Novo Fluxo Simplificado)
+# SEÇÃO 2: Chamada
 st.subheader("Chamada e Frequência")
 st.caption("1. Marque quem VEIO. 2. Justifique abaixo quem FALTOU (se tiver motivo).")
 
-# Coluna 1: Lista de Presença
 col_pres, col_aus = st.columns([1, 1])
 
 with col_pres:
@@ -343,18 +370,14 @@ with col_pres:
         label_visibility="collapsed"
     )
 
-# Lógica de Ausência
 ausentes = [m for m in db['membros'] if m not in presentes]
 motivos_ausencia = {}
 
-# Coluna 2: Justificativas (Gera inputs automáticos)
 with col_aus:
     if ausentes:
         st.markdown("##### 📝 Justificar Ausências")
         st.caption("Deixe em branco para considerar 'Falta'.")
-        
         for membro in ausentes:
-            # Cria um input direto para cada ausente
             motivo = st.text_input(
                 f"Justificativa: {membro}", 
                 placeholder="Ex: Doença, Trabalho...", 
@@ -366,7 +389,7 @@ with col_aus:
 
 st.divider()
 
-# SEÇÃO 3: Tesouraria (AUTOMATIZADA!)
+# SEÇÃO 3: Tesouraria
 st.subheader("Tesouraria")
 c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
 
@@ -418,7 +441,6 @@ with st.form("form_ata_conteudo"):
     submit = st.form_submit_button("💾 Gerar Ata, Salvar Histórico e Baixar")
 
 if submit:
-    # Processa ausências: Nome (Motivo) ou apenas Nome (se falta)
     lista_texto_ausencias = []
     if not ausentes:
         texto_ausencias = "Não houve."
@@ -428,10 +450,9 @@ if submit:
             if motivo:
                 lista_texto_ausencias.append(f"{m} ({motivo})")
             else:
-                lista_texto_ausencias.append(m) # Falta sem justificativa = Apenas o nome
+                lista_texto_ausencias.append(m)
         texto_ausencias = ", ".join(lista_texto_ausencias)
 
-    # Dados
     dados = {
         'num_ata': str(num_ata),
         'conf_nome': db['config'].get('nome_conf', ''),
