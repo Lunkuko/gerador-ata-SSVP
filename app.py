@@ -530,74 +530,47 @@ hora_fim = col_enc4.time_input("Fim")
 
 st.divider()
 st.divider()
-st.markdown("##### ✍️ Assinatura da Ata")
-
-# 1. Opção de quem assina (Radio)
-quem_assinou = st.radio(
-    "Quem secretariou hoje?", 
-    ["1º Secretário", "2º Secretário", "Outro"], 
-    horizontal=True
-)
-
-# 2. Lógica Automática (Calcula Nome e Cargo sozinho)
-# Recupera os nomes padrão da configuração
-nome_sec1 = db['config'].get('sec_padrao', None)
-nome_sec2 = db['config'].get('sec2_padrao', None)
-
-if quem_assinou == "1º Secretário":
-    # Busca o índice do 1º Secretário na lista
-    idx_selecionado = get_index_membro(nome_sec1, db['membros'])
-    cargo_final = "1º Secretário(a)" # Cargo Fixo
-    
-<<<<<<< HEAD
-elif quem_assinou == "2º Secretário":
-    # Busca o índice do 2º Secretário na lista
-    idx_selecionado = get_index_membro(nome_sec2, db['membros'])
-    cargo_final = "2º Secretário(a)" # Cargo Fixo
-=======
-    st.divider()
+st.divider()
     st.markdown("##### ✍️ Assinatura da Ata")
     
-    # Botão para trocar rapidamente entre 1º e 2º Secretário
-    quem_assinou = st.radio("Quem secretariou hoje?", ["1º Secretário", "2º Secretário", "Outro"], horizontal=True)
+    # 1. Opção de quem assina (Radio)
+    quem_assinou = st.radio(
+        "Quem secretariou hoje?", 
+        ["1º Secretário", "2º Secretário", "Outro"], 
+        horizontal=True
+    )
 
-    c_sec1, c_sec2 = st.columns(2)
+    # 2. Lógica Automática (Calcula Nome e Cargo sozinho)
+    # Recupera os nomes padrão da configuração
+    nome_sec1 = db['config'].get('sec_padrao', None)
+    nome_sec2 = db['config'].get('sec2_padrao', None)
     
-    # Lógica Inteligente para preencher os campos
     if quem_assinou == "1º Secretário":
-        idx_s_hoje = get_index_membro(sec_padrao_nome, db['membros'])
-        cargo_s_hoje = sec_padrao_cargo
+        # Busca o índice do 1º Secretário na lista
+        idx_selecionado = get_index_membro(nome_sec1, db['membros'])
+        cargo_final = "1º Secretário(a)" # Cargo Fixo
+        
     elif quem_assinou == "2º Secretário":
-        # Busca os dados do 2º secretário direto da config
-        nome_s2 = db['config'].get('sec2_padrao', None)
-        cargo_s2 = db['config'].get('sec2_cargo_padrao', '2º Secretário(a)')
-        idx_s_hoje = get_index_membro(nome_s2, db['membros'])
-        cargo_s_hoje = cargo_s2
+        # Busca o índice do 2º Secretário na lista
+        idx_selecionado = get_index_membro(nome_sec2, db['membros'])
+        cargo_final = "2º Secretário(a)" # Cargo Fixo
+        
     else:
-        idx_s_hoje = 0
-        cargo_s_hoje = "Secretário(a) ad hoc"
+        # Se for "Outro", zera a seleção ou mantém o primeiro
+        idx_selecionado = 0
+        cargo_final = "Secretário(a) ad hoc" # Cargo Automático
 
-    # Campos finais (já vêm preenchidos com a escolha acima)
-    sec_nome = c_sec1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_s_hoje)
-    sec_cargo = c_sec2.text_input("Cargo na Ata", cargo_s_hoje)
->>>>>>> 9cdd482b02357f47b52e8476df1a06d15cfa1295
+    # 3. Campos Visuais (O Cargo agora é automático/invisível)
+    col_s1, col_s2 = st.columns([2, 1])
     
-else:
-    # Se for "Outro", zera a seleção ou mantém o primeiro
-    idx_selecionado = 0
-    cargo_final = "Secretário(a) ad hoc" # Cargo Automático
-
-# 3. Campos Visuais (O Cargo agora é automático/invisível)
-col_s1, col_s2 = st.columns([2, 1])
-
-# O Seletor de Nomes já "pula" para a pessoa certa baseada no índice calculado acima
-sec_nome = col_s1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_selecionado)
-
-# Mostra o cargo apenas para conferência (bloqueado), sem precisar digitar
-col_s2.text_input("Cargo na Ata (Automático)", value=cargo_final, disabled=True)
-
-# 4. Botão de Gerar (Agora usamos st.button pois removemos o st.form)
-submit = st.button("💾 Gerar Ata, Salvar Histórico e Baixar", type="primary")
+    # O Seletor de Nomes já "pula" para a pessoa certa baseada no índice calculado acima
+    sec_nome = col_s1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_selecionado)
+    
+    # Mostra o cargo apenas para conferência (bloqueado), sem precisar digitar
+    col_s2.text_input("Cargo na Ata (Automático)", value=cargo_final, disabled=True)
+    
+    # 4. Botão de Gerar (Agora usamos st.button pois removemos o st.form)
+    submit = st.button("💾 Gerar Ata, Salvar Histórico e Baixar", type="primary")
 
 if submit:
     # Processa ausências
