@@ -9,6 +9,7 @@ from num2words import num2words
 from datetime import datetime, date, timedelta, time
 import io
 import urllib.parse
+import time  # <--- NOVO: Necessário para a "paciência"
 
 # ==============================================================================
 # 1. CONFIGURAÇÃO E CONEXÃO
@@ -21,47 +22,63 @@ except Exception as e:
     st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe.")
     st.stop()
 
-# --- CACHE INTELIGENTE ---
-# O ttl=3600 diz: "Se ninguém mexer, guarda esses dados por 1 hora na memória"
+# --- CACHE INTELIGENTE COM RETRY (PACIÊNCIA) ---
 @st.cache_data(ttl=3600)
 def carregar_dados_cloud():
-    try:
-        # Aqui tiramos o ttl=0 para ele usar o cache interno da conexão também se precisar
-        df_config = conn.read(worksheet="Config")
-        df_membros = conn.read(worksheet="Membros")
-        df_anos = conn.read(worksheet="Anos")
-        
-        # Tratamento de erro se vier vazio
-        if df_membros.empty:
-            lista_membros = []
-        else:
-            lista_membros = df_membros['Nome'].dropna().astype(str).tolist()
-            
-        if df_anos.empty:
-            lista_anos = []
-        else:
-            lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
-
-        # Processa Configuração
-        config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
+    # Tenta 3 vezes antes de falhar (Estratégia de Backoff)
+    tentativas = 0
+    max_tentativas = 3
+    
+    while tentativas < max_tentativas:
         try:
-            config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
-        except:
-            config_dict['ultima_ata'] = 0
+            # Tenta ler as abas
+            df_config = conn.read(worksheet="Config")
+            df_membros = conn.read(worksheet="Membros")
+            df_anos = conn.read(worksheet="Anos")
+            
+            # Se funcionou, sai do loop e processa
+            break 
+            
+        except Exception as e:
+            erro_str = str(e)
+            # Se for erro de Cota (429) ou Rate Limit
+            if "429" in erro_str or "Quota exceeded" in erro_str:
+                tentativas += 1
+                tempo_espera = 2 ** tentativas # Espera 2s, depois 4s...
+                time.sleep(tempo_espera) 
+                if tentativas == max_tentativas:
+                    st.error(f"⚠️ O Google está sobrecarregado (Erro 429). Aguarde 1 minuto e recarregue a página.")
+                    st.stop()
+            else:
+                # Se for outro erro (ex: planilha não existe), para na hora
+                st.error(f"Erro técnico ao ler dados: {e}")
+                st.stop()
 
-        return {
-            "config": config_dict,
-            "membros": lista_membros,
-            "anos": lista_anos
-        }
-    except Exception as e:
-        # Se der erro de limite, limpamos o cache para tentar de novo limpo na próxima
-        st.cache_data.clear()
-        st.error(f"Erro ao carregar dados: {e}")
-        st.stop()
+    # --- PROCESSAMENTO DOS DADOS (Só chega aqui se leu com sucesso) ---
+    if df_membros.empty:
+        lista_membros = []
+    else:
+        lista_membros = df_membros['Nome'].dropna().astype(str).tolist()
+        
+    if df_anos.empty:
+        lista_anos = []
+    else:
+        lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
+
+    # Processa Configuração
+    config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
+    try:
+        config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
+    except:
+        config_dict['ultima_ata'] = 0
+
+    return {
+        "config": config_dict,
+        "membros": lista_membros,
+        "anos": lista_anos
+    }
 
 def obter_saldo_anterior():
-    # Saldo não precisa de cache agressivo, mas podemos proteger também
     try:
         df_hist = conn.read(worksheet="Historico")
         if not df_hist.empty and 'Saldo' in df_hist.columns:
@@ -77,6 +94,8 @@ def limpar_memoria():
     st.cache_data.clear()
 
 def atualizar_config_cloud(chave, valor):
+    # Pausa de segurança para evitar cliques duplos rápidos
+    time.sleep(1) 
     df = conn.read(worksheet="Config")
     if chave in df['Chave'].values:
         df.loc[df['Chave'] == chave, 'Valor'] = str(valor)
@@ -84,9 +103,10 @@ def atualizar_config_cloud(chave, valor):
         new_row = pd.DataFrame([{'Chave': chave, 'Valor': str(valor)}])
         df = pd.concat([df, new_row], ignore_index=True)
     conn.update(worksheet="Config", data=df)
-    limpar_memoria() # Importante: Limpa a memória para ver a mudança
+    limpar_memoria()
 
 def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
+    time.sleep(1) # Pausa de segurança
     df = conn.read(worksheet=aba)
     sucesso = False
     if acao == "adicionar":
@@ -101,7 +121,7 @@ def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
         sucesso = True
     
     if sucesso:
-        limpar_memoria() # Força recarga
+        limpar_memoria()
     return sucesso
 
 def salvar_historico_cloud(dados):
@@ -125,7 +145,6 @@ def salvar_historico_cloud(dados):
         }])
         df_atualizado = pd.concat([df_hist, nova_linha], ignore_index=True)
         conn.update(worksheet="Historico", data=df_atualizado)
-        # Não precisamos limpar memória aqui se não formos ler o histórico imediatamente
         return True
     except Exception as e:
         st.error(f"Erro ao salvar no histórico: {e}")
@@ -256,7 +275,7 @@ def gerar_pdf_nativo(dados):
 # ==============================================================================
 # 4. APP PRINCIPAL
 # ==============================================================================
-db = carregar_dados_cloud() # Agora usa cache!
+db = carregar_dados_cloud() # Agora com sistema anti-erro 429
 prox_num_ata = db['config']['ultima_ata'] + 1
 saldo_anterior_db = obter_saldo_anterior()
 
@@ -310,16 +329,19 @@ with st.sidebar:
             st.rerun()
 
     with st.expander("👥 Membros"):
-        st.caption("Use com moderação para não travar o Google.")
+        st.caption("Aguarde alguns segundos entre adições.")
         novo_membro = st.text_input("Novo Membro")
         if st.button("Adicionar"):
-            if gerenciar_lista_cloud("Membros", "Nome", novo_membro, "adicionar"):
-                st.rerun()
+            with st.spinner("Adicionando..."):
+                if gerenciar_lista_cloud("Membros", "Nome", novo_membro, "adicionar"):
+                    st.rerun()
+        
         mem_remove = st.selectbox("Remover", ["Selecione..."] + db['membros'])
         if st.button("Remover"):
-            if mem_remove != "Selecione...":
-                gerenciar_lista_cloud("Membros", "Nome", mem_remove, "remover")
-                st.rerun()
+            with st.spinner("Removendo..."):
+                if mem_remove != "Selecione...":
+                    gerenciar_lista_cloud("Membros", "Nome", mem_remove, "remover")
+                    st.rerun()
 
     with st.expander("📅 Anos Temáticos"):
         novo_ano = st.text_input("Novo Ano")
@@ -333,7 +355,7 @@ with st.sidebar:
         atualizar_config_cloud('ultima_ata', nova_contagem)
         st.rerun()
 
-    if st.button("🔄 Atualizar Dados da Nuvem"):
+    if st.button("🔄 Forçar Atualização"):
         limpar_memoria()
         st.rerun()
 
@@ -363,6 +385,7 @@ col_pres, col_aus = st.columns([1, 1])
 
 with col_pres:
     st.markdown("##### ✅ Quem está presente?")
+    # Dica: default vazio ou cheio? Se cheio, melhor para tirar quem faltou.
     presentes = st.multiselect(
         "Selecione os presentes:", 
         db['membros'], 
