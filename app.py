@@ -85,7 +85,6 @@ def limpar_memoria():
 def atualizar_config_cloud(chave, valor):
     time.sleep(1) 
     df = conn.read(worksheet="Config")
-    # Converte para string para garantir compatibilidade com o Sheets
     str_valor = str(valor)
     
     if chave in df['Chave'].values:
@@ -158,6 +157,12 @@ def obter_proxima_data(dia_semana_alvo):
     dias_para_adicionar = (dia_semana_alvo - dia_hoje + 7) % 7
     return hoje + timedelta(days=dias_para_adicionar)
 
+def get_index_membro(nome_alvo, lista_membros):
+    try:
+        return lista_membros.index(nome_alvo)
+    except:
+        return 0
+
 # ==============================================================================
 # 3. FUNÇÕES AUXILIARES E GERADORES
 # ==============================================================================
@@ -191,7 +196,7 @@ def gerar_docx(dados):
     doc.add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']} e a ausência justificada: {dados['ausencias']}.")
     doc.add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve.")
     
-    # Financeiro com nome do Tesoureiro
+    # Financeiro
     receita_txt = formatar_valor_extenso(dados['receita'])
     despesa_txt = formatar_valor_extenso(dados['despesa'])
     decima_txt = formatar_valor_extenso(dados['decima'])
@@ -207,7 +212,7 @@ def gerar_docx(dados):
     doc.add_paragraph(f"Palavra dos Visitantes: {dados['palavra_visitantes']}")
     doc.add_paragraph(f"Movimento financeiro (coletas e doações): {dados['mov_financeiro_extra']}")
     
-    # Oração final
+    # Oração
     coleta_quem = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
     doc.add_paragraph(f"Coleta Secreta: em seguida {coleta_quem} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}. Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}. Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino.")
     
@@ -249,7 +254,6 @@ def gerar_pdf_nativo(dados):
     visitantes_txt = f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve."
     add_paragraph(visitantes_txt)
     
-    # Financeiro
     receita_txt = formatar_valor_extenso(dados['receita'])
     despesa_txt = formatar_valor_extenso(dados['despesa'])
     decima_txt = formatar_valor_extenso(dados['decima'])
@@ -265,7 +269,6 @@ def gerar_pdf_nativo(dados):
     add_paragraph(f"Palavra dos Visitantes: {dados['palavra_visitantes']}")
     add_paragraph(f"Movimento financeiro (coletas e doações): {dados['mov_financeiro_extra']}")
     
-    # Oração Final
     coleta_quem = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
     add_paragraph(f"Coleta Secreta: em seguida {coleta_quem} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}. Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}. Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino.")
     
@@ -290,18 +293,10 @@ saldo_anterior_db = obter_saldo_anterior()
 dia_semana_cfg = db['config'].get('dia_semana_reuniao', None)
 data_padrao = obter_proxima_data(dia_semana_cfg)
 
-# Recupera cargos padrão
 pres_padrao_nome = db['config'].get('pres_padrao', None)
-sec_padrao_nome = db['config'].get('sec_padrao', None)
+sec_padrao_nome = db['config'].get('sec_padrao', None) # 1º Sec
 sec_padrao_cargo = db['config'].get('sec_cargo_padrao', '1º Secretário(a)')
 tes_padrao_nome = db['config'].get('tes_padrao', None)
-
-# Função auxiliar para achar index na lista de membros
-def get_index_membro(nome_alvo, lista_membros):
-    try:
-        return lista_membros.index(nome_alvo)
-    except:
-        return 0
 
 hora_padrao_str = db['config'].get('horario_padrao', '20:00')
 try:
@@ -316,11 +311,10 @@ cidade_padrao = db['config'].get('cidade_padrao', 'Belo Horizonte - MG')
 with st.sidebar:
     st.header("⚙️ Painel de Controle")
     
-    # 1. Cargos (CORRIGIDO PARA 2 SECRETÁRIOS)
+    # 1. Cargos (2 Secretários)
     with st.expander("👔 Cargos e Funções (Padrões)"):
         st.info("Defina quem ocupa os cargos atualmente.")
         
-        # Presidente
         idx_p = get_index_membro(pres_padrao_nome, db['membros'])
         cfg_pres = st.selectbox("Presidente", db['membros'], index=idx_p, key="kp")
         
@@ -333,7 +327,7 @@ with st.sidebar:
         
         st.divider()
 
-        # 2º Secretário (NOVO!)
+        # 2º Secretário
         sec2_nome_cfg = db['config'].get('sec2_padrao', None)
         sec2_cargo_cfg = db['config'].get('sec2_cargo_padrao', '2º Secretário(a)')
         idx_s2 = get_index_membro(sec2_nome_cfg, db['membros'])
@@ -343,7 +337,6 @@ with st.sidebar:
         
         st.divider()
         
-        # Tesoureiro
         idx_t = get_index_membro(tes_padrao_nome, db['membros'])
         cfg_tes = st.selectbox("Tesoureiro(a)", db['membros'], index=idx_t, key="kt")
         
@@ -352,7 +345,7 @@ with st.sidebar:
                 atualizar_config_cloud('pres_padrao', cfg_pres)
                 atualizar_config_cloud('sec_padrao', cfg_sec1)
                 atualizar_config_cloud('sec_cargo_padrao', cfg_sec1_cargo)
-                atualizar_config_cloud('sec2_padrao', cfg_sec2)       # Salva 2º Sec
+                atualizar_config_cloud('sec2_padrao', cfg_sec2)
                 atualizar_config_cloud('sec2_cargo_padrao', cfg_sec2_cargo)
                 atualizar_config_cloud('tes_padrao', cfg_tes)
             st.success("Cargos salvos!")
@@ -489,7 +482,6 @@ decima = c_fin3.number_input("Décima (Opcional)", min_value=0.0, step=0.10)
 saldo_calculado = saldo_anterior_db + receita - despesa - decima
 saldo = c_fin4.number_input("Saldo Final (Calculado)", value=saldo_calculado, disabled=True)
 
-# NOVO: Tesoureiro na seção financeira
 idx_tesoureiro = get_index_membro(tes_padrao_nome, db['membros'])
 tes_nome = c_fin4.selectbox("Responsável (Tesoureiro)", db['membros'], index=idx_tesoureiro)
 
@@ -498,20 +490,18 @@ if saldo < 0:
 
 st.divider()
 
-# SEÇÃO 4: Textos
-    
+# SEÇÃO 4: Textos (SEM ST.FORM)
 c_esp1, c_esp2, c_esp3 = st.columns(3)
-# Pré-seleciona Presidente Padrão
 idx_presidente = get_index_membro(pres_padrao_nome, db['membros'])
 pres_nome = c_esp1.selectbox("Presidente", db['membros'], index=idx_presidente)
-    
+
 leitura_fonte = c_esp2.text_input("Fonte Leitura")
 leitor_nome = c_esp3.selectbox("Leitor", db['membros'])
-    
+
 st.divider()
 status_ata_ant = st.radio("Ata Anterior", ["Aprovada sem ressalvas", "Aprovada com ressalvas"], horizontal=True)
 visitantes = st.text_area("Visitantes (Nomes)", placeholder="Se houver visitantes, digite aqui...")
-    
+
 st.divider()
 st.markdown("### Relatórios")
 socioeconomico = st.text_area("Socioeconômico", height=100)
@@ -519,7 +509,7 @@ noticias = st.text_area("Notícias / Visitas", height=100)
 escala = st.text_area("Escala Próxima Semana")
 palavra = st.text_area("Palavra Franca")
 expediente = st.text_area("Expediente")
-    
+
 st.divider()
 col_enc1, col_enc2 = st.columns(2)
 p_vis = col_enc1.text_input("Palavra Visitantes", "Nada a declarar")
@@ -528,79 +518,38 @@ col_enc3, col_enc4 = st.columns(2)
 musica = col_enc3.text_input("Música", "Hino de Ozanam")
 hora_fim = col_enc4.time_input("Fim")
 
-st.divider()
+# --- ASSINATURA AUTOMÁTICA ---
 st.divider()
 st.markdown("##### ✍️ Assinatura da Ata")
 
-# 1. Opção de quem assina (Radio)
 quem_assinou = st.radio(
     "Quem secretariou hoje?", 
     ["1º Secretário", "2º Secretário", "Outro"], 
     horizontal=True
 )
 
-# 2. Lógica Automática (Calcula Nome e Cargo sozinho)
-# Recupera os nomes padrão da configuração
 nome_sec1 = db['config'].get('sec_padrao', None)
 nome_sec2 = db['config'].get('sec2_padrao', None)
 
 if quem_assinou == "1º Secretário":
-    # Busca o índice do 1º Secretário na lista
     idx_selecionado = get_index_membro(nome_sec1, db['membros'])
-    cargo_final = "1º Secretário(a)" # Cargo Fixo
-    
-<<<<<<< HEAD
+    cargo_final = "1º Secretário(a)"
 elif quem_assinou == "2º Secretário":
-    # Busca o índice do 2º Secretário na lista
     idx_selecionado = get_index_membro(nome_sec2, db['membros'])
-    cargo_final = "2º Secretário(a)" # Cargo Fixo
-=======
-    st.divider()
-    st.markdown("##### ✍️ Assinatura da Ata")
-    
-    # Botão para trocar rapidamente entre 1º e 2º Secretário
-    quem_assinou = st.radio("Quem secretariou hoje?", ["1º Secretário", "2º Secretário", "Outro"], horizontal=True)
-
-    c_sec1, c_sec2 = st.columns(2)
-    
-    # Lógica Inteligente para preencher os campos
-    if quem_assinou == "1º Secretário":
-        idx_s_hoje = get_index_membro(sec_padrao_nome, db['membros'])
-        cargo_s_hoje = sec_padrao_cargo
-    elif quem_assinou == "2º Secretário":
-        # Busca os dados do 2º secretário direto da config
-        nome_s2 = db['config'].get('sec2_padrao', None)
-        cargo_s2 = db['config'].get('sec2_cargo_padrao', '2º Secretário(a)')
-        idx_s_hoje = get_index_membro(nome_s2, db['membros'])
-        cargo_s_hoje = cargo_s2
-    else:
-        idx_s_hoje = 0
-        cargo_s_hoje = "Secretário(a) ad hoc"
-
-    # Campos finais (já vêm preenchidos com a escolha acima)
-    sec_nome = c_sec1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_s_hoje)
-    sec_cargo = c_sec2.text_input("Cargo na Ata", cargo_s_hoje)
->>>>>>> 9cdd482b02357f47b52e8476df1a06d15cfa1295
-    
+    cargo_final = "2º Secretário(a)"
 else:
-    # Se for "Outro", zera a seleção ou mantém o primeiro
     idx_selecionado = 0
-    cargo_final = "Secretário(a) ad hoc" # Cargo Automático
+    cargo_final = "Secretário(a) ad hoc"
 
-# 3. Campos Visuais (O Cargo agora é automático/invisível)
 col_s1, col_s2 = st.columns([2, 1])
-
-# O Seletor de Nomes já "pula" para a pessoa certa baseada no índice calculado acima
 sec_nome = col_s1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_selecionado)
-
-# Mostra o cargo apenas para conferência (bloqueado), sem precisar digitar
 col_s2.text_input("Cargo na Ata (Automático)", value=cargo_final, disabled=True)
 
-# 4. Botão de Gerar (Agora usamos st.button pois removemos o st.form)
+# BOTÃO FORA DO FORMULÁRIO
+st.divider()
 submit = st.button("💾 Gerar Ata, Salvar Histórico e Baixar", type="primary")
 
 if submit:
-    # Processa ausências
     lista_texto_ausencias = []
     if not ausentes:
         texto_ausencias = "Não houve."
@@ -611,11 +560,10 @@ if submit:
                 lista_texto_ausencias.append(f"{m} ({motivo})")
             else:
                 lista_texto_ausencias.append(f"{m} (Justificado)")
-            else:
+            if not motivo and m not in motivos_ausencia:
                 lista_texto_ausencias.append(m)
         texto_ausencias = ", ".join(lista_texto_ausencias)
 
-    # Monta o Dicionário de Dados
     dados = {
         'num_ata': str(num_ata),
         'conf_nome': db['config'].get('nome_conf', ''),
@@ -640,11 +588,10 @@ if submit:
         'mov_financeiro_extra': mov_extra, 'musica_final': musica,
         'hora_fim': hora_fim.strftime('%H:%M'),
         'secretario_nome': sec_nome,
-        'secretario_cargo': cargo_final, # Usa a variável automática
+        'secretario_cargo': cargo_final,
         'cidade_estado': cidade_estado
     }
     
-    # Salva e Gera Arquivos
     with st.spinner("Arquivando ata na nuvem..."):
         if salvar_historico_cloud(dados):
             st.toast("✅ Ata salva no Histórico com sucesso!")
