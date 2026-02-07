@@ -22,7 +22,9 @@ except Exception as e:
     st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe.")
     st.stop()
 
-# --- CACHE INTELIGENTE COM RETRY ---
+# ==============================================================================
+# 2. FUNÇÕES DE BACKEND (COM PROTEÇÃO CONTRA ERRO 429)
+# ==============================================================================
 @st.cache_data(ttl=3600)
 def carregar_dados_cloud():
     """Carrega dados do Google Sheets com sistema de tentativas (retry)."""
@@ -72,6 +74,7 @@ def carregar_dados_cloud():
     }
 
 def obter_saldo_anterior():
+    """Pega o saldo da última ata no histórico. Se não houver, retorna 0.0."""
     try:
         df_hist = conn.read(worksheet="Historico")
         if not df_hist.empty and 'Saldo' in df_hist.columns and len(df_hist) > 0:
@@ -80,79 +83,6 @@ def obter_saldo_anterior():
     except Exception:
         pass
     return 0.0
-
-def limpar_memoria():
-    carregar_dados_cloud.clear()
-    st.cache_data.clear()
-
-def atualizar_config_cloud(chave, valor):
-    time.sleep(1) 
-    df = conn.read(worksheet="Config")
-    str_valor = str(valor)
-    
-    if chave in df['Chave'].values:
-        df.loc[df['Chave'] == chave, 'Valor'] = str_valor
-    else:
-        new_row = pd.DataFrame([{'Chave': chave, 'Valor': str_valor}])
-        df = pd.concat([df, new_row], ignore_index=True)
-    conn.update(worksheet="Config", data=df)
-    limpar_memoria()
-
-def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
-    time.sleep(1)
-    df = conn.read(worksheet=aba)
-    sucesso = False
-    if acao == "adicionar":
-        if valor not in df[coluna].values:
-            new_row = pd.DataFrame([{coluna: valor}])
-            df = pd.concat([df, new_row], ignore_index=True)
-            conn.update(worksheet=aba, data=df)
-            sucesso = True
-    elif acao == "remover":
-        df = df[df[coluna] != valor]
-        conn.update(worksheet=aba, data=df)
-        sucesso = True
-    
-    if sucesso:
-        limpar_memoria()
-    return sucesso
-
-def salvar_historico_cloud(dados):
-    try:
-        df_hist = conn.read(worksheet="Historico")
-        nova_linha = pd.DataFrame([{
-            "Numero": dados['num_ata'],
-            "Data": dados['data_reuniao'],
-            "Presidente": dados['pres_nome'],
-            "Secretario": dados['secretario_nome'],
-            "Leitura": dados['leitura_fonte'],
-            "Presentes": dados['lista_presentes_txt'],
-            "Ausencias": dados['ausencias'],
-            "Visitantes": dados['lista_visitantes_txt'],
-            "Receita": dados['receita'],
-            "Despesa": dados['despesa'],
-            "Saldo": dados['saldo'],
-            "Socioeconomico": dados['socioeconomico'],
-            "Noticias": dados['noticias_trabalhos'],
-            "Palavra_Franca": dados['palavra_franca']
-        }])
-        df_atualizado = pd.concat([df_hist, nova_linha], ignore_index=True)
-        conn.update(worksheet="Historico", data=df_atualizado)
-        return True
-    except Exception as e:
-        st.error(f"Erro ao salvar no histórico: {e}")
-        return False
-
-# ==============================================================================
-# 2. LÓGICA DE DATAS E PADRÕES
-# ==============================================================================
-def obter_proxima_data(dia_semana_alvo):
-    if dia_semana_alvo is None or dia_semana_alvo == "":
-        return datetime.now().date()
-    try:
-        dia_semana_alvo = int(dia_semana_alvo)
-    except:
-        return 0.0
 
 def limpar_memoria():
     """Força recarga dos dados."""
@@ -204,7 +134,7 @@ def salvar_historico_cloud(dados):
             "Secretario": dados['secretario_nome'],
             "Leitura": dados['leitura_fonte'],
             "Presentes": dados['lista_presentes_txt'],
-            "Ausencias": dados['ausencias'], # Mantemos no banco para histórico, mas não sai no doc
+            "Ausencias": dados['ausencias'],
             "Visitantes": dados['lista_visitantes_txt'],
             "Receita": dados['receita'],
             "Despesa": dados['despesa'],
@@ -270,15 +200,16 @@ def gerar_docx(dados):
     doc.add_paragraph(f"Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP.")
     doc.add_paragraph(f"A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros.")
     
-    # Ata Anterior (Lógica do texto)
+    # Ata Anterior
     doc.add_paragraph(f"A ata anterior foi lida e {dados['status_ata_ant']}.")
     
-    doc.add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']} e a ausência justificada: {dados['ausencias']}.")
-    doc.add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve.")
+    # Chamada (APENAS PRESENTES)
+    doc.add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}.")
     
-    visitantes_txt = f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve."
-    doc.add_paragraph(visitantes_txt)
+    if dados['lista_visitantes_txt']:
+        doc.add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}.")
     
+    # Financeiro
     receita_txt = formatar_valor_extenso(dados['receita'])
     despesa_txt = formatar_valor_extenso(dados['despesa'])
     decima_txt = formatar_valor_extenso(dados['decima'])
@@ -345,11 +276,12 @@ def gerar_pdf_nativo(dados):
     add_paragraph(f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}.")
     add_paragraph(f"Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP.")
     add_paragraph(f"A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros.")
+    
+    # Ata Anterior
     add_paragraph(f"A ata anterior foi lida e {dados['status_ata_ant']}.")
     
-    add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']} e a ausência justificada: {dados['ausencias']}.")
-    visitantes_txt = f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve."
-    add_paragraph(visitantes_txt)
+    # Chamada (APENAS PRESENTES)
+    add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}.")
     
     if dados['lista_visitantes_txt']:
         add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}.")
@@ -404,9 +336,8 @@ def gerar_pdf_nativo(dados):
 db = carregar_dados_cloud()
 prox_num_ata = db['config']['ultima_ata'] + 1
 
-# Recupera Saldo Inicial da Config para passar para a função (caso não tenha histórico)
-saldo_ini_cfg = db['config'].get('saldo_inicial_padrao', 0.0)
-saldo_anterior_db = obter_saldo_anterior(saldo_ini_cfg)
+# CORREÇÃO AQUI: Removemos o argumento da função
+saldo_anterior_db = obter_saldo_anterior()
 
 # --- Recupera Configurações Padrão ---
 dia_semana_cfg = db['config'].get('dia_semana_reuniao', None)
@@ -430,7 +361,7 @@ cidade_padrao = db['config'].get('cidade_padrao', 'Belo Horizonte - MG')
 with st.sidebar:
     st.header("⚙️ Painel de Controle")
     
-    # 1. Cargos (2 Secretários + Tesoureiro + Presidente)
+    # 1. Cargos (2 Secretários)
     with st.expander("👔 Cargos e Funções (Padrões)"):
         st.info("Defina quem ocupa os cargos atualmente.")
         
@@ -481,12 +412,6 @@ with st.sidebar:
         cfg_local = st.text_input("Local", local_padrao)
         cfg_cidade = st.text_input("Cidade", cidade_padrao)
         st.divider()
-        
-        # Saldo Inicial (Implantação)
-        st.caption("💰 Saldo Inicial (Use apenas na implantação)")
-        cfg_saldo_ini = st.number_input("Saldo de Partida", value=float(saldo_ini_cfg))
-        
-        st.divider()
         cfg_cp = st.text_input("Cons. Particular", db['config'].get('cons_particular', ''))
         cfg_cc = st.text_input("Cons. Central", db['config'].get('cons_central', ''))
         cfg_dt_fund = st.text_input("Data Fundação", db['config'].get('data_fundacao', ''))
@@ -499,7 +424,6 @@ with st.sidebar:
                 atualizar_config_cloud('horario_padrao', cfg_hora)
                 atualizar_config_cloud('local_padrao', cfg_local)
                 atualizar_config_cloud('cidade_padrao', cfg_cidade)
-                atualizar_config_cloud('saldo_inicial_padrao', str(cfg_saldo_ini))
                 atualizar_config_cloud('cons_particular', cfg_cp)
                 atualizar_config_cloud('cons_central', cfg_cc)
                 atualizar_config_cloud('data_fundacao', cfg_dt_fund)
