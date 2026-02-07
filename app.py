@@ -316,7 +316,7 @@ cidade_padrao = db['config'].get('cidade_padrao', 'Belo Horizonte - MG')
 with st.sidebar:
     st.header("⚙️ Painel de Controle")
     
-    # 1. Cargos (CORRIGIDO)
+    # 1. Cargos (CORRIGIDO PARA 2 SECRETÁRIOS)
     with st.expander("👔 Cargos e Funções (Padrões)"):
         st.info("Defina quem ocupa os cargos atualmente.")
         
@@ -326,10 +326,20 @@ with st.sidebar:
         
         st.divider()
         
-        # Secretário
-        idx_s = get_index_membro(sec_padrao_nome, db['membros'])
-        cfg_sec = st.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_s, key="ks")
-        cfg_sec_cargo = st.text_input("Título do Cargo (ex: 1º Secretário)", value=sec_padrao_cargo, key="ksc")
+        # 1º Secretário
+        idx_s1 = get_index_membro(sec_padrao_nome, db['membros'])
+        cfg_sec1 = st.selectbox("1º Secretário(a)", db['membros'], index=idx_s1, key="ks1")
+        cfg_sec1_cargo = st.text_input("Cargo (ex: 1º Secretário)", value=sec_padrao_cargo, key="ksc1")
+        
+        st.divider()
+
+        # 2º Secretário (NOVO!)
+        sec2_nome_cfg = db['config'].get('sec2_padrao', None)
+        sec2_cargo_cfg = db['config'].get('sec2_cargo_padrao', '2º Secretário(a)')
+        idx_s2 = get_index_membro(sec2_nome_cfg, db['membros'])
+        
+        cfg_sec2 = st.selectbox("2º Secretário(a)", db['membros'], index=idx_s2, key="ks2")
+        cfg_sec2_cargo = st.text_input("Cargo (ex: 2º Secretário)", value=sec2_cargo_cfg, key="ksc2")
         
         st.divider()
         
@@ -340,14 +350,15 @@ with st.sidebar:
         if st.button("Salvar Cargos"):
             with st.spinner("Salvando..."):
                 atualizar_config_cloud('pres_padrao', cfg_pres)
-                atualizar_config_cloud('sec_padrao', cfg_sec)
-                atualizar_config_cloud('sec_cargo_padrao', cfg_sec_cargo)
+                atualizar_config_cloud('sec_padrao', cfg_sec1)
+                atualizar_config_cloud('sec_cargo_padrao', cfg_sec1_cargo)
+                atualizar_config_cloud('sec2_padrao', cfg_sec2)       # Salva 2º Sec
+                atualizar_config_cloud('sec2_cargo_padrao', cfg_sec2_cargo)
                 atualizar_config_cloud('tes_padrao', cfg_tes)
-            st.success("Cargos salvos com sucesso!")
-            # Pequena pausa para garantir que o Google salvou antes de recarregar
+            st.success("Cargos salvos!")
             time.sleep(1) 
             st.rerun()
-            
+
     # 2. Configurações Fixas
     with st.expander("🏢 Configurações da Reunião"):
         cfg_nome = st.text_input("Nome da Conferência", db['config'].get('nome_conf', ''))
@@ -488,60 +499,95 @@ if saldo < 0:
 st.divider()
 
 # SEÇÃO 4: Textos
-with st.form("form_ata_conteudo"):
     
-    c_esp1, c_esp2, c_esp3 = st.columns(3)
-    # Pré-seleciona Presidente Padrão
-    idx_presidente = get_index_membro(pres_padrao_nome, db['membros'])
-    pres_nome = c_esp1.selectbox("Presidente", db['membros'], index=idx_presidente)
+c_esp1, c_esp2, c_esp3 = st.columns(3)
+# Pré-seleciona Presidente Padrão
+idx_presidente = get_index_membro(pres_padrao_nome, db['membros'])
+pres_nome = c_esp1.selectbox("Presidente", db['membros'], index=idx_presidente)
     
-    leitura_fonte = c_esp2.text_input("Fonte Leitura")
-    leitor_nome = c_esp3.selectbox("Leitor", db['membros'])
+leitura_fonte = c_esp2.text_input("Fonte Leitura")
+leitor_nome = c_esp3.selectbox("Leitor", db['membros'])
     
-    st.divider()
-    status_ata_ant = st.radio("Ata Anterior", ["Aprovada sem ressalvas", "Aprovada com ressalvas"], horizontal=True)
-    visitantes = st.text_area("Visitantes (Nomes)", placeholder="Se houver visitantes, digite aqui...")
+st.divider()
+status_ata_ant = st.radio("Ata Anterior", ["Aprovada sem ressalvas", "Aprovada com ressalvas"], horizontal=True)
+visitantes = st.text_area("Visitantes (Nomes)", placeholder="Se houver visitantes, digite aqui...")
     
-    st.divider()
-    st.markdown("### Relatórios")
-    socioeconomico = st.text_area("Socioeconômico", height=100)
-    noticias = st.text_area("Notícias / Visitas", height=100)
-    escala = st.text_area("Escala Próxima Semana")
-    palavra = st.text_area("Palavra Franca")
-    expediente = st.text_area("Expediente")
+st.divider()
+st.markdown("### Relatórios")
+socioeconomico = st.text_area("Socioeconômico", height=100)
+noticias = st.text_area("Notícias / Visitas", height=100)
+escala = st.text_area("Escala Próxima Semana")
+palavra = st.text_area("Palavra Franca")
+expediente = st.text_area("Expediente")
     
-    st.divider()
-    col_enc1, col_enc2 = st.columns(2)
-    p_vis = col_enc1.text_input("Palavra Visitantes", "Nada a declarar")
-    mov_extra = col_enc2.text_input("Mov. Extra", "Coleta regular")
-    col_enc3, col_enc4 = st.columns(2)
-    musica = col_enc3.text_input("Música", "Hino de Ozanam")
-    hora_fim = col_enc4.time_input("Fim")
+st.divider()
+col_enc1, col_enc2 = st.columns(2)
+p_vis = col_enc1.text_input("Palavra Visitantes", "Nada a declarar")
+mov_extra = col_enc2.text_input("Mov. Extra", "Coleta regular")
+col_enc3, col_enc4 = st.columns(2)
+musica = col_enc3.text_input("Música", "Hino de Ozanam")
+hora_fim = col_enc4.time_input("Fim")
+
+st.divider()
+st.divider()
+st.markdown("##### ✍️ Assinatura da Ata")
+
+# 1. Opção de quem assina (Radio)
+quem_assinou = st.radio(
+    "Quem secretariou hoje?", 
+    ["1º Secretário", "2º Secretário", "Outro"], 
+    horizontal=True
+)
+
+# 2. Lógica Automática (Calcula Nome e Cargo sozinho)
+# Recupera os nomes padrão da configuração
+nome_sec1 = db['config'].get('sec_padrao', None)
+nome_sec2 = db['config'].get('sec2_padrao', None)
+
+if quem_assinou == "1º Secretário":
+    # Busca o índice do 1º Secretário na lista
+    idx_selecionado = get_index_membro(nome_sec1, db['membros'])
+    cargo_final = "1º Secretário(a)" # Cargo Fixo
     
-    c_sec1, c_sec2 = st.columns(2)
-    # Pré-seleciona Secretário Padrão
-    idx_secretario = get_index_membro(sec_padrao_nome, db['membros'])
-    sec_nome = c_sec1.selectbox("Secretário", db['membros'], index=idx_secretario)
-    sec_cargo = c_sec2.text_input("Cargo", sec_padrao_cargo)
+elif quem_assinou == "2º Secretário":
+    # Busca o índice do 2º Secretário na lista
+    idx_selecionado = get_index_membro(nome_sec2, db['membros'])
+    cargo_final = "2º Secretário(a)" # Cargo Fixo
     
-    submit = st.form_submit_button("💾 Gerar Ata, Salvar Histórico e Baixar")
+else:
+    # Se for "Outro", zera a seleção ou mantém o primeiro
+    idx_selecionado = 0
+    cargo_final = "Secretário(a) ad hoc" # Cargo Automático
+
+# 3. Campos Visuais (O Cargo agora é automático/invisível)
+col_s1, col_s2 = st.columns([2, 1])
+
+# O Seletor de Nomes já "pula" para a pessoa certa baseada no índice calculado acima
+sec_nome = col_s1.selectbox("Nome do(a) Secretário(a)", db['membros'], index=idx_selecionado)
+
+# Mostra o cargo apenas para conferência (bloqueado), sem precisar digitar
+col_s2.text_input("Cargo na Ata (Automático)", value=cargo_final, disabled=True)
+
+# 4. Botão de Gerar (Agora usamos st.button pois removemos o st.form)
+submit = st.button("💾 Gerar Ata, Salvar Histórico e Baixar", type="primary")
 
 if submit:
+    # Processa ausências
     lista_texto_ausencias = []
     if not ausentes:
         texto_ausencias = "Não houve."
     else:
         for m in ausentes:
-            if m in motivos_ausencia:
-                motivo = motivos_ausencia[m]
-                if motivo:
-                    lista_texto_ausencias.append(f"{m} ({motivo})")
-                else:
-                    lista_texto_ausencias.append(f"{m} (Justificado)")
+            motivo = motivos_ausencia.get(m, "").strip()
+            if motivo:
+                lista_texto_ausencias.append(f"{m} ({motivo})")
+            else:
+                lista_texto_ausencias.append(f"{m} (Justificado)")
             else:
                 lista_texto_ausencias.append(m)
         texto_ausencias = ", ".join(lista_texto_ausencias)
 
+    # Monta o Dicionário de Dados
     dados = {
         'num_ata': str(num_ata),
         'conf_nome': db['config'].get('nome_conf', ''),
@@ -559,16 +605,18 @@ if submit:
         'ausencias': texto_ausencias,
         'lista_visitantes_txt': visitantes.replace("\n", ", ") if visitantes else "",
         'receita': receita, 'despesa': despesa, 'decima': decima, 'saldo': saldo,
-        'tes_nome': tes_nome, # Novo campo
+        'tes_nome': tes_nome,
         'socioeconomico': socioeconomico, 'noticias_trabalhos': noticias,
         'escala_visitas': escala, 'palavra_franca': palavra,
         'expediente': expediente, 'palavra_visitantes': p_vis,
         'mov_financeiro_extra': mov_extra, 'musica_final': musica,
         'hora_fim': hora_fim.strftime('%H:%M'),
-        'secretario_nome': sec_nome, 'secretario_cargo': sec_cargo,
+        'secretario_nome': sec_nome,
+        'secretario_cargo': cargo_final, # Usa a variável automática
         'cidade_estado': cidade_estado
     }
     
+    # Salva e Gera Arquivos
     with st.spinner("Arquivando ata na nuvem..."):
         if salvar_historico_cloud(dados):
             st.toast("✅ Ata salva no Histórico com sucesso!")
