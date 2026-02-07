@@ -22,9 +22,10 @@ except Exception as e:
     st.error("Erro de conexão. Verifique se o arquivo .streamlit/secrets.toml existe.")
     st.stop()
 
-# --- CACHE INTELIGENTE COM RETRY (PACIÊNCIA) ---
+# --- CACHE INTELIGENTE COM RETRY ---
 @st.cache_data(ttl=3600)
 def carregar_dados_cloud():
+    """Carrega dados do Google Sheets com sistema de tentativas (retry)."""
     tentativas = 0
     max_tentativas = 3
     
@@ -38,7 +39,7 @@ def carregar_dados_cloud():
             erro_str = str(e)
             if "429" in erro_str or "Quota exceeded" in erro_str:
                 tentativas += 1
-                time.sleep(2 ** tentativas)
+                time.sleep(2 ** tentativas) # Espera exponencialmente (2s, 4s, 8s)
                 if tentativas == max_tentativas:
                     st.error(f"⚠️ O Google está sobrecarregado (Erro 429). Aguarde 1 minuto e recarregue a página.")
                     st.stop()
@@ -46,6 +47,7 @@ def carregar_dados_cloud():
                 st.error(f"Erro técnico ao ler dados: {e}")
                 st.stop()
 
+    # Tratamento de listas vazias
     if df_membros.empty:
         lista_membros = []
     else:
@@ -56,6 +58,7 @@ def carregar_dados_cloud():
     else:
         lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
 
+    # Processa Configurações
     config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
     try:
         config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
@@ -68,7 +71,7 @@ def carregar_dados_cloud():
         "anos": lista_anos
     }
 
-def obter_saldo_anterior(saldo_inicial_config):
+def obter_saldo_anterior():
     try:
         df_hist = conn.read(worksheet="Historico")
         if not df_hist.empty and 'Saldo' in df_hist.columns and len(df_hist) > 0:
@@ -76,11 +79,7 @@ def obter_saldo_anterior(saldo_inicial_config):
             return float(ultimo_valor)
     except Exception:
         pass
-    
-    try:
-        return float(saldo_inicial_config)
-    except:
-        return 0.0
+    return 0.0
 
 def limpar_memoria():
     carregar_dados_cloud.clear()
@@ -128,7 +127,7 @@ def salvar_historico_cloud(dados):
             "Secretario": dados['secretario_nome'],
             "Leitura": dados['leitura_fonte'],
             "Presentes": dados['lista_presentes_txt'],
-            "Ausencias": dados['ausencias'], # Mantemos no banco para histórico, mas não sai no doc
+            "Ausencias": dados['ausencias'],
             "Visitantes": dados['lista_visitantes_txt'],
             "Receita": dados['receita'],
             "Despesa": dados['despesa'],
@@ -153,6 +152,83 @@ def obter_proxima_data(dia_semana_alvo):
     try:
         dia_semana_alvo = int(dia_semana_alvo)
     except:
+        return 0.0
+
+def limpar_memoria():
+    """Força recarga dos dados."""
+    carregar_dados_cloud.clear()
+    st.cache_data.clear()
+
+def atualizar_config_cloud(chave, valor):
+    """Salva uma configuração específica na aba Config."""
+    time.sleep(1) # Pausa de segurança
+    df = conn.read(worksheet="Config")
+    str_valor = str(valor)
+    
+    if chave in df['Chave'].values:
+        df.loc[df['Chave'] == chave, 'Valor'] = str_valor
+    else:
+        new_row = pd.DataFrame([{'Chave': chave, 'Valor': str_valor}])
+        df = pd.concat([df, new_row], ignore_index=True)
+    conn.update(worksheet="Config", data=df)
+    limpar_memoria()
+
+def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
+    """Adiciona ou remove itens das listas (Membros/Anos)."""
+    time.sleep(1)
+    df = conn.read(worksheet=aba)
+    sucesso = False
+    if acao == "adicionar":
+        if valor not in df[coluna].values:
+            new_row = pd.DataFrame([{coluna: valor}])
+            df = pd.concat([df, new_row], ignore_index=True)
+            conn.update(worksheet=aba, data=df)
+            sucesso = True
+    elif acao == "remover":
+        df = df[df[coluna] != valor]
+        conn.update(worksheet=aba, data=df)
+        sucesso = True
+    
+    if sucesso:
+        limpar_memoria()
+    return sucesso
+
+def salvar_historico_cloud(dados):
+    """Salva o resumo da ata na aba Historico."""
+    try:
+        df_hist = conn.read(worksheet="Historico")
+        nova_linha = pd.DataFrame([{
+            "Numero": dados['num_ata'],
+            "Data": dados['data_reuniao'],
+            "Presidente": dados['pres_nome'],
+            "Secretario": dados['secretario_nome'],
+            "Leitura": dados['leitura_fonte'],
+            "Presentes": dados['lista_presentes_txt'],
+            "Ausencias": dados['ausencias'], # Mantemos no banco para histórico, mas não sai no doc
+            "Visitantes": dados['lista_visitantes_txt'],
+            "Receita": dados['receita'],
+            "Despesa": dados['despesa'],
+            "Saldo": dados['saldo'],
+            "Socioeconomico": dados['socioeconomico'],
+            "Noticias": dados['noticias_trabalhos'],
+            "Palavra_Franca": dados['palavra_franca']
+        }])
+        df_atualizado = pd.concat([df_hist, nova_linha], ignore_index=True)
+        conn.update(worksheet="Historico", data=df_atualizado)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar no histórico: {e}")
+        return False
+
+# ==============================================================================
+# 3. UTILITÁRIOS (DATA, TEXTO, PDF, DOCX)
+# ==============================================================================
+def obter_proxima_data(dia_semana_alvo):
+    if dia_semana_alvo is None or dia_semana_alvo == "":
+        return datetime.now().date()
+    try:
+        dia_semana_alvo = int(dia_semana_alvo)
+    except:
         return datetime.now().date()
     hoje = datetime.now().date()
     dia_hoje = hoje.weekday()
@@ -167,9 +243,6 @@ def get_index_membro(nome_alvo, lista_membros):
     except:
         return 0
 
-# ==============================================================================
-# 3. FUNÇÕES AUXILIARES E GERADORES
-# ==============================================================================
 def formatar_valor_extenso(valor):
     try:
         extenso = num2words(valor, lang='pt_BR', to='currency')
@@ -197,16 +270,15 @@ def gerar_docx(dados):
     doc.add_paragraph(f"Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP.")
     doc.add_paragraph(f"A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros.")
     
-    # Ata Anterior
+    # Ata Anterior (Lógica do texto)
     doc.add_paragraph(f"A ata anterior foi lida e {dados['status_ata_ant']}.")
     
-    # Chamada (APENAS PRESENTES)
-    doc.add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}.")
+    doc.add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']} e a ausência justificada: {dados['ausencias']}.")
+    doc.add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve.")
     
-    if dados['lista_visitantes_txt']:
-        doc.add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}.")
+    visitantes_txt = f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve."
+    doc.add_paragraph(visitantes_txt)
     
-    # Financeiro
     receita_txt = formatar_valor_extenso(dados['receita'])
     despesa_txt = formatar_valor_extenso(dados['despesa'])
     decima_txt = formatar_valor_extenso(dados['decima'])
@@ -236,7 +308,7 @@ def gerar_docx(dados):
     if dados['palavra_visitantes']:
         doc.add_paragraph(f"Palavra dos Visitantes: {dados['palavra_visitantes']}")
     
-    # Oração (Movimento Financeiro Extra removido)
+    # Oração
     coleta_quem = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
     doc.add_paragraph(f"Coleta Secreta: em seguida {coleta_quem} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}. Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}. Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino.")
     
@@ -273,12 +345,11 @@ def gerar_pdf_nativo(dados):
     add_paragraph(f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}.")
     add_paragraph(f"Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP.")
     add_paragraph(f"A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros.")
-    
-    # Ata Anterior
     add_paragraph(f"A ata anterior foi lida e {dados['status_ata_ant']}.")
     
-    # Chamada (APENAS PRESENTES)
-    add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}.")
+    add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']} e a ausência justificada: {dados['ausencias']}.")
+    visitantes_txt = f"Presenças dos visitantes: {dados['lista_visitantes_txt']}." if dados['lista_visitantes_txt'] else "Presenças dos visitantes: Não houve."
+    add_paragraph(visitantes_txt)
     
     if dados['lista_visitantes_txt']:
         add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}.")
@@ -359,7 +430,7 @@ cidade_padrao = db['config'].get('cidade_padrao', 'Belo Horizonte - MG')
 with st.sidebar:
     st.header("⚙️ Painel de Controle")
     
-    # 1. Cargos (2 Secretários)
+    # 1. Cargos (2 Secretários + Tesoureiro + Presidente)
     with st.expander("👔 Cargos e Funções (Padrões)"):
         st.info("Defina quem ocupa os cargos atualmente.")
         
@@ -646,7 +717,7 @@ if submit:
         'hora_inicio': hora_inicio.strftime('%H:%M'),
         'local': local, 'pres_nome': pres_nome,
         'leitura_fonte': leitura_fonte, 'leitor_nome': leitor_nome,
-        'status_ata_ant': status_final, # Usa status com texto extra
+        'status_ata_ant': status_final,
         'lista_presentes_txt': ", ".join(presentes),
         'ausencias': texto_ausencias,
         'lista_visitantes_txt': visitantes.replace("\n", ", ") if visitantes else "",
