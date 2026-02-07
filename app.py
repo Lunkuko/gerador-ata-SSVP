@@ -9,11 +9,7 @@ from num2words import num2words
 from datetime import datetime, date, timedelta, time
 import io
 import urllib.parse
-<<<<<<< HEAD
 import time
-=======
-import time  # <--- NOVO: Necessário para a "paciência"
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
 
 # ==============================================================================
 # 1. CONFIGURAÇÃO E CONEXÃO
@@ -29,16 +25,11 @@ except Exception as e:
 # --- CACHE INTELIGENTE COM RETRY (PACIÊNCIA) ---
 @st.cache_data(ttl=3600)
 def carregar_dados_cloud():
-<<<<<<< HEAD
-=======
-    # Tenta 3 vezes antes de falhar (Estratégia de Backoff)
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
     tentativas = 0
     max_tentativas = 3
     
     while tentativas < max_tentativas:
         try:
-<<<<<<< HEAD
             df_config = conn.read(worksheet="Config")
             df_membros = conn.read(worksheet="Membros")
             df_anos = conn.read(worksheet="Anos")
@@ -48,38 +39,13 @@ def carregar_dados_cloud():
             if "429" in erro_str or "Quota exceeded" in erro_str:
                 tentativas += 1
                 time.sleep(2 ** tentativas)
-=======
-            # Tenta ler as abas
-            df_config = conn.read(worksheet="Config")
-            df_membros = conn.read(worksheet="Membros")
-            df_anos = conn.read(worksheet="Anos")
-            
-            # Se funcionou, sai do loop e processa
-            break 
-            
-        except Exception as e:
-            erro_str = str(e)
-            # Se for erro de Cota (429) ou Rate Limit
-            if "429" in erro_str or "Quota exceeded" in erro_str:
-                tentativas += 1
-                tempo_espera = 2 ** tentativas # Espera 2s, depois 4s...
-                time.sleep(tempo_espera) 
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
                 if tentativas == max_tentativas:
                     st.error(f"⚠️ O Google está sobrecarregado (Erro 429). Aguarde 1 minuto e recarregue a página.")
                     st.stop()
             else:
-<<<<<<< HEAD
                 st.error(f"Erro técnico ao ler dados: {e}")
                 st.stop()
 
-=======
-                # Se for outro erro (ex: planilha não existe), para na hora
-                st.error(f"Erro técnico ao ler dados: {e}")
-                st.stop()
-
-    # --- PROCESSAMENTO DOS DADOS (Só chega aqui se leu com sucesso) ---
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
     if df_membros.empty:
         lista_membros = []
     else:
@@ -90,10 +56,6 @@ def carregar_dados_cloud():
     else:
         lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
 
-<<<<<<< HEAD
-=======
-    # Processa Configuração
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
     config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
     try:
         config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
@@ -121,10 +83,6 @@ def limpar_memoria():
     st.cache_data.clear()
 
 def atualizar_config_cloud(chave, valor):
-<<<<<<< HEAD
-=======
-    # Pausa de segurança para evitar cliques duplos rápidos
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
     time.sleep(1) 
     df = conn.read(worksheet="Config")
     # Converte para string para garantir compatibilidade com o Sheets
@@ -139,11 +97,7 @@ def atualizar_config_cloud(chave, valor):
     limpar_memoria()
 
 def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
-<<<<<<< HEAD
     time.sleep(1)
-=======
-    time.sleep(1) # Pausa de segurança
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
     df = conn.read(worksheet=aba)
     sucesso = False
     if acao == "adicionar":
@@ -328,11 +282,7 @@ def gerar_pdf_nativo(dados):
 # ==============================================================================
 # 4. APP PRINCIPAL
 # ==============================================================================
-<<<<<<< HEAD
 db = carregar_dados_cloud()
-=======
-db = carregar_dados_cloud() # Agora com sistema anti-erro 429
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
 prox_num_ata = db['config']['ultima_ata'] + 1
 saldo_anterior_db = obter_saldo_anterior()
 
@@ -428,10 +378,6 @@ with st.sidebar:
             with st.spinner("Adicionando..."):
                 if gerenciar_lista_cloud("Membros", "Nome", novo_membro, "adicionar"):
                     st.rerun()
-<<<<<<< HEAD
-=======
-        
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
         mem_remove = st.selectbox("Remover", ["Selecione..."] + db['membros'])
         if st.button("Remover"):
             with st.spinner("Removendo..."):
@@ -479,12 +425,7 @@ st.subheader("Chamada e Frequência")
 col_pres, col_just = st.columns(2)
 
 with col_pres:
-<<<<<<< HEAD
     st.markdown("##### 1️⃣ Quem está presente?")
-=======
-    st.markdown("##### ✅ Quem está presente?")
-    # Dica: default vazio ou cheio? Se cheio, melhor para tirar quem faltou.
->>>>>>> ad3dda19e52aadb7fb0c6106adeb58d4f038cf4e
     presentes = st.multiselect(
         "Selecione os presentes:", 
         db['membros'], 
