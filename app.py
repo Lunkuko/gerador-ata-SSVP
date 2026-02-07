@@ -43,11 +43,9 @@ def carregar_dados_cloud():
     }
 
 def obter_saldo_anterior():
-    """Busca o último saldo gravado na aba Historico."""
     try:
         df_hist = conn.read(worksheet="Historico", ttl=0)
         if not df_hist.empty and 'Saldo' in df_hist.columns:
-            # Pega o último valor válido. Se tiver vazio, retorna 0.0
             ultimo_valor = df_hist['Saldo'].iloc[-1]
             return float(ultimo_valor)
     except Exception:
@@ -237,7 +235,7 @@ def gerar_pdf_nativo(dados):
 # ==============================================================================
 db = carregar_dados_cloud()
 prox_num_ata = db['config']['ultima_ata'] + 1
-saldo_anterior_db = obter_saldo_anterior() # Busca saldo anterior da nuvem
+saldo_anterior_db = obter_saldo_anterior()
 
 # --- Cálculo dos Padrões ---
 dia_semana_cfg = db['config'].get('dia_semana_reuniao', None)
@@ -329,42 +327,56 @@ with st.expander(f"📍 Detalhes: {hora_padrao_str} - {local_padrao} (Clique par
 
 st.divider()
 
-# SEÇÃO 2: Chamada e Frequência (Inteligente)
+# SEÇÃO 2: Chamada (Novo Fluxo Simplificado)
 st.subheader("Chamada e Frequência")
-st.caption("Desmarque quem faltou. O sistema pedirá a justificativa automaticamente.")
-col_pres, col_aus = st.columns([2, 1])
+st.caption("1. Marque quem VEIO. 2. Justifique abaixo quem FALTOU (se tiver motivo).")
+
+# Coluna 1: Lista de Presença
+col_pres, col_aus = st.columns([1, 1])
+
 with col_pres:
-    presentes = st.multiselect("Membros Presentes", db['membros'], default=db['membros'])
+    st.markdown("##### ✅ Quem está presente?")
+    presentes = st.multiselect(
+        "Selecione os presentes:", 
+        db['membros'], 
+        default=db['membros'],
+        label_visibility="collapsed"
+    )
+
+# Lógica de Ausência
 ausentes = [m for m in db['membros'] if m not in presentes]
 motivos_ausencia = {}
+
+# Coluna 2: Justificativas (Gera inputs automáticos)
 with col_aus:
     if ausentes:
-        st.markdown("**🛑 Ausências Detectadas:**")
-        justificaram = st.multiselect("Quem justificou?", ausentes, placeholder="Selecione...")
-        if justificaram:
-            for membro in justificaram:
-                motivos_ausencia[membro] = st.text_input(f"Motivo: {membro}", placeholder="Ex: Trabalho, Doença", key=f"mot_{membro}")
+        st.markdown("##### 📝 Justificar Ausências")
+        st.caption("Deixe em branco para considerar 'Falta'.")
+        
+        for membro in ausentes:
+            # Cria um input direto para cada ausente
+            motivo = st.text_input(
+                f"Justificativa: {membro}", 
+                placeholder="Ex: Doença, Trabalho...", 
+                key=f"just_{membro}"
+            )
+            motivos_ausencia[membro] = motivo
     else:
-        st.success("Todos presentes! 🎉")
+        st.success("Todos os membros presentes! 🎉")
 
 st.divider()
 
-# SEÇÃO 3: Tesouraria (AUTOMATIZADA!) 💰
-# Fora do formulário para ter cálculo em tempo real
+# SEÇÃO 3: Tesouraria (AUTOMATIZADA!)
 st.subheader("Tesouraria")
 c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
 
-# Mostra o saldo anterior recuperado (apenas visualização ou editável se precisar corrigir)
 st.caption(f"Saldo trazido da ata anterior: R$ {saldo_anterior_db:.2f}")
 
 receita = c_fin1.number_input("Receita (Entradas)", min_value=0.0, step=0.10)
 despesa = c_fin2.number_input("Despesa (Saídas)", min_value=0.0, step=0.10)
 decima = c_fin3.number_input("Décima (Opcional)", min_value=0.0, step=0.10)
 
-# CÁLCULO MÁGICO 🪄
 saldo_calculado = saldo_anterior_db + receita - despesa - decima
-
-# Campo final bloqueado para edição direta (força o cálculo estar certo)
 saldo = c_fin4.number_input("Saldo Final (Calculado)", value=saldo_calculado, disabled=True)
 
 if saldo < 0:
@@ -372,7 +384,7 @@ if saldo < 0:
 
 st.divider()
 
-# SEÇÃO 4: Textos (Dentro do Form)
+# SEÇÃO 4: Textos
 with st.form("form_ata_conteudo"):
     
     c_esp1, c_esp2, c_esp3 = st.columns(3)
@@ -406,18 +418,17 @@ with st.form("form_ata_conteudo"):
     submit = st.form_submit_button("💾 Gerar Ata, Salvar Histórico e Baixar")
 
 if submit:
-    # Processa ausências
+    # Processa ausências: Nome (Motivo) ou apenas Nome (se falta)
     lista_texto_ausencias = []
     if not ausentes:
         texto_ausencias = "Não houve."
     else:
         for m in ausentes:
-            if m in motivos_ausencia and motivos_ausencia[m]:
-                lista_texto_ausencias.append(f"{m} ({motivos_ausencia[m]})")
-            elif m in motivos_ausencia:
-                lista_texto_ausencias.append(f"{m} (Justificado)")
+            motivo = motivos_ausencia.get(m, "").strip()
+            if motivo:
+                lista_texto_ausencias.append(f"{m} ({motivo})")
             else:
-                lista_texto_ausencias.append(m)
+                lista_texto_ausencias.append(m) # Falta sem justificativa = Apenas o nome
         texto_ausencias = ", ".join(lista_texto_ausencias)
 
     # Dados
@@ -437,7 +448,7 @@ if submit:
         'lista_presentes_txt': ", ".join(presentes),
         'ausencias': texto_ausencias,
         'lista_visitantes_txt': visitantes.replace("\n", ", ") if visitantes else "",
-        'receita': receita, 'despesa': despesa, 'decima': decima, 'saldo': saldo, # Usa variáveis de fora do form
+        'receita': receita, 'despesa': despesa, 'decima': decima, 'saldo': saldo,
         'socioeconomico': socioeconomico, 'noticias_trabalhos': noticias,
         'escala_visitas': escala, 'palavra_franca': palavra,
         'expediente': expediente, 'palavra_visitantes': p_vis,
