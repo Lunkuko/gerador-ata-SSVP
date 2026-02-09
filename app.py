@@ -83,7 +83,8 @@ authenticator = stauth.Authenticate(
 )
 
 # Tela de Login
-name, authentication_status, username = authenticator.login("Login", "main")
+# CÓDIGO NOVO (COMPATÍVEL COM VERSÃO 0.4.x)
+name, authentication_status, username = authenticator.login("main")
 
 # ==============================================================================
 # 3. VERIFICAÇÃO DE ACESSO (O APP SÓ RODA SE LOGADO)
