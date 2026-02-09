@@ -352,7 +352,7 @@ def gerar_pdf_nativo(dados):
     pdf.ln(10)
     pdf.cell(0, 10, f"{limpar_texto(dados['cidade_estado'])}, {limpar_texto(dados['data_reuniao'])}.", ln=True, align="R")
     pdf.ln(10)
-    pdf.cell(0, 10, "Assinaturas dos Presentes:", ln=True, align="L")
+    #pdf.cell(0, 10, "Assinaturas dos Presentes:", ln=True, align="L")
     for _ in range(30): pdf.cell(0, 8, "_"*65, ln=True, align="C")
     
     try:
