@@ -164,7 +164,7 @@ def atualizar_config_cloud(chave, valor):
     conn.update(worksheet="Config", data=df)
     limpar_memoria()
 
-    def salvar_lote_configs(dicionario_mudancas):
+def salvar_lote_configs(dicionario_mudancas):
     try:
         # 1. Lê a planilha uma única vez
         df = conn.read(worksheet="Config")
