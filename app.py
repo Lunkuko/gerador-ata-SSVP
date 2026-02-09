@@ -281,40 +281,64 @@ def formatar_data_br(data):
     return str(data)
 
 # --- Geradores Docs ---
+def eh_valido(valor):
+    if valor is None: return False
+    s = str(valor).strip().lower()
+    return s not in ["", "nan", "none", "null", "false", "0"]
+
+def eh_valido(valor):
+    if valor is None: return False
+    s = str(valor).strip().lower()
+    return s not in ["", "nan", "none", "null", "false", "0"]
+
 def gerar_docx(dados):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(12)
     
+    # 1. Cabeçalho
     texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
-    if dados['data_fundacao']: texto += f", fundada em {dados['data_fundacao']}"
-    if dados['data_agregacao']: texto += f", agregada em {dados['data_agregacao']}"
+    
+    # === FILTRO APLICADO AQUI ===
+    if eh_valido(dados['data_fundacao']): 
+        texto += f", fundada em {dados['data_fundacao']}"
+        
+    if eh_valido(dados['data_agregacao']): 
+        texto += f", agregada em {dados['data_agregacao']}"
+    # ============================
+
     texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
     
+    # 2. Corpo
     texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
     texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
     texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
     
-    if dados['lista_visitantes_txt']: texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
+    # Filtro para visitantes
+    if eh_valido(dados['lista_visitantes_txt']): 
+        texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
     
     rec = formatar_valor_extenso(dados['receita'])
     des = formatar_valor_extenso(dados['despesa'])
     dec = formatar_valor_extenso(dados['decima'])
     sal = formatar_valor_extenso(dados['saldo'])
-    tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o Tesoureiro"
+    tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if eh_valido(dados['tes_nome']) else "o Tesoureiro"
+    
     texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
     
-    if dados['lista_visitantes_txt']: texto += " Agradecimentos aos visitantes."
-    if dados['socioeconomico']: texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
-    if dados['noticias_trabalhos']: texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
-    if dados['escala_visitas']: texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
-    if dados['palavra_franca']: texto += f" Palavra franca: {dados['palavra_franca']}."
-    if dados['expediente']: texto += f" Expediente: {dados['expediente']}."
-    if dados['palavra_visitantes']: texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
+    # 3. Relatórios (com filtro nan)
+    if eh_valido(dados['lista_visitantes_txt']): texto += " Agradecimentos aos visitantes."
+    if eh_valido(dados['socioeconomico']): texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
+    if eh_valido(dados['noticias_trabalhos']): texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
+    if eh_valido(dados['escala_visitas']): texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
+    if eh_valido(dados['palavra_franca']): texto += f" Palavra franca: {dados['palavra_franca']}."
+    if eh_valido(dados['expediente']): texto += f" Expediente: {dados['expediente']}."
+    if eh_valido(dados['palavra_visitantes']): texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
     
-    tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
+    # 4. Encerramento
+    tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if eh_valido(dados['tes_nome']) else "o tesoureiro"
     texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
     texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
     texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
@@ -329,6 +353,78 @@ def gerar_docx(dados):
     for _ in range(30): doc.add_paragraph("_"*85)
     
     return doc
+
+def gerar_pdf_nativo(dados):
+    # Função interna para limpar caracteres estranhos (emojis, etc)
+    def limpar_texto(txt):
+        if not eh_valido(txt): return "" # Usa a nossa validação aqui também
+        return str(txt).encode('latin-1', 'replace').decode('latin-1')
+
+    pdf = PDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.set_margins(25, 25, 25)
+    
+    # 1. Cabeçalho
+    texto = f"Ata nº {limpar_texto(dados['num_ata'])} da reunião ordinária da Conferência {limpar_texto(dados['conf_nome'])} da SSVP"
+    
+    # === FILTRO APLICADO AQUI ===
+    if eh_valido(dados['data_fundacao']): 
+        texto += f", fundada em {limpar_texto(dados['data_fundacao'])}"
+        
+    if eh_valido(dados['data_agregacao']): 
+        texto += f", agregada em {limpar_texto(dados['data_agregacao'])}"
+    # ============================
+
+    texto += f", vinculada ao Conselho Particular {limpar_texto(dados['cons_particular'])}, área do Central de {limpar_texto(dados['cons_central'])}, realizada às {limpar_texto(dados['hora_inicio'])} do dia {limpar_texto(dados['data_reuniao'])} do Ano Temático: {limpar_texto(dados['ano_tematico'])}, na sala de reuniões {limpar_texto(dados['local'])}."
+    
+    # 2. Corpo
+    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {limpar_texto(dados['pres_nome'])}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+    texto += f" A leitura espiritual foi tirada do(a) {limpar_texto(dados['leitura_fonte'])}, proclamada pelo(a) Cfd/Csc. {limpar_texto(dados['leitor_nome'])}, sendo refletida por alguns membros."
+    texto += f" A ata anterior foi lida e {limpar_texto(dados['status_ata_ant'])}."
+    texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {limpar_texto(dados['lista_presentes_txt'])}."
+    
+    if eh_valido(dados['lista_visitantes_txt']): 
+        texto += f" Presenças dos visitantes: {limpar_texto(dados['lista_visitantes_txt'])}."
+    
+    rec = formatar_valor_extenso(dados['receita'])
+    des = formatar_valor_extenso(dados['despesa'])
+    dec = formatar_valor_extenso(dados['decima'])
+    sal = formatar_valor_extenso(dados['saldo'])
+    tes = f"o(a) Tesoureiro(a) {limpar_texto(dados['tes_nome'])}" if eh_valido(dados['tes_nome']) else "o Tesoureiro"
+    
+    texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
+    
+    # 3. Relatórios (com filtro nan)
+    if eh_valido(dados['lista_visitantes_txt']): texto += " Agradecimentos aos visitantes."
+    if eh_valido(dados['socioeconomico']): texto += f" Levantamento Socioeconômico: {limpar_texto(dados['socioeconomico'])}."
+    if eh_valido(dados['noticias_trabalhos']): texto += f" Notícias dos trabalhos da semana: {limpar_texto(dados['noticias_trabalhos'])}."
+    if eh_valido(dados['escala_visitas']): texto += f" Novas nomeações (escala de visitas): {limpar_texto(dados['escala_visitas'])}."
+    if eh_valido(dados['palavra_franca']): texto += f" Palavra franca: {limpar_texto(dados['palavra_franca'])}."
+    if eh_valido(dados['expediente']): texto += f" Expediente: {limpar_texto(dados['expediente'])}."
+    if eh_valido(dados['palavra_visitantes']): texto += f" Palavra dos Visitantes: {limpar_texto(dados['palavra_visitantes'])}."
+    
+    # 4. Encerramento
+    tes_col = f"o(a) tesoureiro(a) {limpar_texto(dados['tes_nome'])}" if eh_valido(dados['tes_nome']) else "o tesoureiro"
+    texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {limpar_texto(dados['musica_final'])}."
+    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {limpar_texto(dados['hora_fim'])}."
+    texto += f" Para constar, eu, {limpar_texto(dados['secretario_nome'])}, {limpar_texto(dados['secretario_cargo'])}, lavrei a presente ata, que dato e assino."
+    
+    pdf.multi_cell(0, 7, texto, align="J")
+    pdf.ln(10)
+    pdf.cell(0, 10, f"{limpar_texto(dados['cidade_estado'])}, {limpar_texto(dados['data_reuniao'])}.", ln=True, align="R")
+    pdf.ln(10)
+    pdf.cell(0, 10, "Assinaturas dos Presentes:", ln=True, align="L")
+    for _ in range(30): pdf.cell(0, 8, "_"*65, ln=True, align="C")
+    
+    try:
+        return pdf.output(dest='S').encode('latin-1', 'replace')
+    except:
+        try:
+            return bytes(pdf.output())
+        except:
+            return b"%PDF-1.4 erro de geracao"
 
 def gerar_pdf_nativo(dados):
     # Função auxiliar para limpar caracteres que o FPDF não aceita (ex: emojis)
