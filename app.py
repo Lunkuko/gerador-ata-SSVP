@@ -164,6 +164,29 @@ def atualizar_config_cloud(chave, valor):
     conn.update(worksheet="Config", data=df)
     limpar_memoria()
 
+    def salvar_lote_configs(dicionario_mudancas):
+    """Salva várias configurações de uma só vez para economizar cota da API."""
+    try:
+        # 1. Lê a planilha uma única vez
+        df = conn.read(worksheet="Config")
+        
+        # 2. Aplica todas as mudanças no DataFrame
+        for chave, valor in dicionario_mudancas.items():
+            valor_str = str(valor)
+            if chave in df['Chave'].values:
+                df.loc[df['Chave'] == chave, 'Valor'] = valor_str
+            else:
+                new_row = pd.DataFrame([{'Chave': chave, 'Valor': valor_str}])
+                df = pd.concat([df, new_row], ignore_index=True)
+        
+        # 3. Salva no Google uma única vez
+        conn.update(worksheet="Config", data=df)
+        limpar_memoria()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar configurações: {e}")
+        return False
+
 def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
     time.sleep(1)
     df = conn.read(worksheet=aba)
@@ -492,13 +515,19 @@ elif authentication_status:
             ct = st.selectbox("Tesoureiro", db['membros'], index=it)
             
             if st.button("Salvar Cargos"):
-                atualizar_config_cloud('pres_padrao', cp)
-                atualizar_config_cloud('sec_padrao', cs1)
-                atualizar_config_cloud('sec_cargo_padrao', csc1)
-                atualizar_config_cloud('sec2_padrao', cs2)
-                atualizar_config_cloud('sec2_cargo_padrao', csc2)
-                atualizar_config_cloud('tes_padrao', ct)
-                st.rerun()
+                novos_cargos = {
+                    'pres_padrao': cp,
+                    'sec_padrao': cs1,
+                    'sec_cargo_padrao': csc1,
+                    'sec2_padrao': cs2,
+                    'sec2_cargo_padrao': csc2,
+                    'tes_padrao': ct
+                }
+                with st.spinner("Salvando cargos..."):
+                    if salvar_lote_configs(novos_cargos):
+                        st.success("Cargos atualizados!")
+                        time.sleep(1)
+                        st.rerun()
 
         with st.expander("🏢 Configs"):
             cn = st.text_input("Nome Conf.", db['config'].get('nome_conf',''))
@@ -511,15 +540,23 @@ elif authentication_status:
             dag = st.text_input("Dt Agreg.", db['config'].get('data_agregacao',''))
             
             if st.button("Salvar Configs"):
-                atualizar_config_cloud('nome_conf', cn)
-                atualizar_config_cloud('horario_padrao', ch)
-                atualizar_config_cloud('local_padrao', cl)
-                atualizar_config_cloud('cidade_padrao', cc)
-                atualizar_config_cloud('cons_particular', cp)
-                atualizar_config_cloud('cons_central', cce)
-                atualizar_config_cloud('data_fundacao', dfu)
-                atualizar_config_cloud('data_agregacao', dag)
-                st.rerun()
+                # Cria um dicionário com TUDO que precisa mudar
+                novos_dados = {
+                    'nome_conf': cn,
+                    'horario_padrao': ch,
+                    'local_padrao': cl,
+                    'cidade_padrao': cc,
+                    'cons_particular': cp,
+                    'cons_central': cce,
+                    'data_fundacao': dfu,
+                    'data_agregacao': dag
+                }
+                
+                with st.spinner("Salvando tudo de uma vez..."):
+                    if salvar_lote_configs(novos_dados):
+                        st.success("Configurações salvas!")
+                        time.sleep(1)
+                        st.rerun()  
 
         with st.expander("👥 Membros"):
             nm = st.text_input("Novo Membro")
