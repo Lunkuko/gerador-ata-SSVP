@@ -103,9 +103,9 @@ def carregar_dados_cloud():
 
     return {"config": config_dict, "membros": lista_membros, "anos": lista_anos}
 
+@st.cache_data(ttl=3600)
 def obter_saldo_anterior():
     try:
-        # ttl=0 garante saldo fresco
         df_hist = conn.read(worksheet="Historico", ttl=0)
         if not df_hist.empty and 'Saldo' in df_hist.columns and len(df_hist) > 0:
             return float(df_hist['Saldo'].iloc[-1])
@@ -719,7 +719,14 @@ elif authentication_status:
 
     st.subheader("Tesouraria")
     cf1, cf2, cf3, cf4 = st.columns(4)
-    saldo_ant = obter_saldo_anterior()
+    
+    # === CORREÇÃO: Usa memória para não chamar API toda hora ===
+    if 'saldo_cache' not in st.session_state:
+        st.session_state.saldo_cache = obter_saldo_anterior()
+    
+    saldo_ant = st.session_state.saldo_cache
+    # ===========================================================
+
     st.caption(f"Saldo Anterior: R$ {saldo_ant:.2f}")
     
     v_rec = float(dc.get('Receita', 0.0))
