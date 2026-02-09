@@ -272,9 +272,10 @@ elif authentication_status:
 
     def formatar_data_br(data):
         if isinstance(data, (datetime, date)): return data.strftime('%d/%m/%Y')
+        if not data or str(data) == "nan": return ""
         return str(data)
 
-    # --- Geradores Docs (SEM ASSINATURAS FIXAS, COM 30 LINHAS) ---
+    # --- Geradores Docs ---
     def gerar_docx(dados):
         doc = Document()
         style = doc.styles['Normal']
@@ -282,7 +283,16 @@ elif authentication_status:
         style.font.size = Pt(12)
         
         # Constrói o texto corrido (sem parágrafos extras)
-        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
+        
+        if dados['data_fundacao']:
+            texto += f", fundada em {dados['data_fundacao']}"
+            
+        if dados['data_agregacao']:
+            texto += f", agregada em {dados['data_agregacao']}"
+            
+        texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+        
         texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
         texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
         texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
@@ -333,8 +343,17 @@ elif authentication_status:
         pdf.set_font("Arial", size=12)
         pdf.set_margins(25, 25, 25)
         
-        # Texto corrido
-        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+        # Texto corrido (Condicional de Agregação)
+        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
+        
+        if dados['data_fundacao']:
+            texto += f", fundada em {dados['data_fundacao']}"
+            
+        if dados['data_agregacao']:
+            texto += f", agregada em {dados['data_agregacao']}"
+            
+        texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+        
         texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
         texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
         texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
