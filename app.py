@@ -29,28 +29,24 @@ except Exception as e:
 def carregar_usuarios():
     """Lê os usuários da planilha 'Usuarios'."""
     try:
-        # Tenta ler a aba Usuarios
         df = conn.read(worksheet="Usuarios")
-        df = df.dropna(subset=['username']) # Remove linhas vazias
+        df = df.dropna(subset=['username']) 
         
         credentials = {"usernames": {}}
         for _, row in df.iterrows():
             credentials["usernames"][row['username']] = {
                 "name": row['name'],
-                "password": row['password'], # O Hash gerado
+                "password": row['password'], 
                 "roles": [row['role']] if 'role' in row else ['editor']
             }
         return credentials
     except:
-        # Se a aba não existir ou der erro, retorna vazio para não travar
         return {"usernames": {}}
 
 def salvar_novo_usuario(username, name, password_hash, role):
     """Cria um novo usuário na planilha."""
     try:
         df = conn.read(worksheet="Usuarios")
-        
-        # Verifica duplicidade
         if not df.empty and username in df['username'].values:
             return False, "Usuário já existe!"
             
@@ -70,7 +66,6 @@ def salvar_novo_usuario(username, name, password_hash, role):
 # --- Configuração do Autenticador ---
 credentials_dict = carregar_usuarios()
 
-# Se não houver usuários na planilha, cria um admin de emergência na memória
 if not credentials_dict["usernames"]:
     st.warning("⚠️ Nenhuma aba 'Usuarios' encontrada ou está vazia.")
     st.info("Crie a aba 'Usuarios' com colunas: username, name, password, role")
@@ -82,12 +77,11 @@ authenticator = stauth.Authenticate(
     30 
 )
 
-# Tela de Login
-# CÓDIGO NOVO (COMPATÍVEL COM VERSÃO 0.4.x)
+# Compatibilidade com versão nova do Authenticator
 name, authentication_status, username = authenticator.login("main")
 
 # ==============================================================================
-# 3. VERIFICAÇÃO DE ACESSO (O APP SÓ RODA SE LOGADO)
+# 3. VERIFICAÇÃO DE ACESSO
 # ==============================================================================
 if authentication_status == False:
     st.error("Usuário ou senha incorretos")
@@ -97,16 +91,14 @@ elif authentication_status == None:
 
 elif authentication_status:
     # ==========================================================================
-    # === ÁREA SEGURA (TUDO AQUI DENTRO SÓ APARECE LOGADO) ===
+    # === ÁREA SEGURA ===
     # ==========================================================================
     
-    # --- BARRA LATERAL (Logout e Admin) ---
     with st.sidebar:
         st.write(f"👤 Olá, **{name}**")
         authenticator.logout("Sair", "sidebar")
         st.divider()
         
-        # Gestão de Usuários (Apenas Admin)
         user_role = credentials_dict['usernames'][username].get('roles', ['editor'])[0]
         
         if user_role == 'admin':
@@ -121,8 +113,11 @@ elif authentication_status:
                     
                     if btn_criar:
                         if new_user and new_pass:
-                            # Gera Hash (Versão 0.3.3)
-                            hashed = stauth.Hasher([new_pass]).generate()[0]
+                            try:
+                                hashed = stauth.Hasher([new_pass]).generate()[0]
+                            except:
+                                hashed = stauth.Hasher().generate([new_pass])[0]
+                                
                             ok, msg = salvar_novo_usuario(new_user, new_name, hashed, new_role)
                             if ok:
                                 st.success(msg)
@@ -279,45 +274,56 @@ elif authentication_status:
         if isinstance(data, (datetime, date)): return data.strftime('%d/%m/%Y')
         return str(data)
 
-    # --- Geradores Docs ---
+    # --- Geradores Docs (SEM ASSINATURAS FIXAS, COM 30 LINHAS) ---
     def gerar_docx(dados):
         doc = Document()
         style = doc.styles['Normal']
         style.font.name = 'Arial'
         style.font.size = Pt(12)
         
-        doc.add_paragraph(f"Ata nº {dados['num_ata']}").alignment = WD_ALIGN_PARAGRAPH.CENTER
-        doc.add_paragraph(f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}.")
-        doc.add_paragraph(f"Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP.")
-        doc.add_paragraph(f"A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros.")
-        doc.add_paragraph(f"A ata anterior foi lida e {dados['status_ata_ant']}.")
-        doc.add_paragraph(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}.")
+        # Constrói o texto corrido (sem parágrafos extras)
+        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+        texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+        texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
+        texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
+        texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
         
         if dados['lista_visitantes_txt']:
-            doc.add_paragraph(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}.")
+            texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
         
         rec = formatar_valor_extenso(dados['receita'])
         des = formatar_valor_extenso(dados['despesa'])
         dec = formatar_valor_extenso(dados['decima'])
         sal = formatar_valor_extenso(dados['saldo'])
         tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o Tesoureiro"
-        doc.add_paragraph(f"Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}.")
+        texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
         
-        if dados['lista_visitantes_txt']: doc.add_paragraph("Agradecimentos aos visitantes.")
-        if dados['socioeconomico']: doc.add_paragraph(f"Levantamento Socioeconômico: {dados['socioeconomico']}.")
-        if dados['noticias_trabalhos']: doc.add_paragraph(f"Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}")
-        if dados['escala_visitas']: doc.add_paragraph(f"Novas nomeações (escala de visitas): {dados['escala_visitas']}")
-        if dados['palavra_franca']: doc.add_paragraph(f"Palavra franca: {dados['palavra_franca']}")
-        if dados['expediente']: doc.add_paragraph(f"Expediente: {dados['expediente']}")
-        if dados['palavra_visitantes']: doc.add_paragraph(f"Palavra dos Visitantes: {dados['palavra_visitantes']}")
+        if dados['lista_visitantes_txt']: texto += " Agradecimentos aos visitantes."
+        if dados['socioeconomico']: texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
+        if dados['noticias_trabalhos']: texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
+        if dados['escala_visitas']: texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
+        if dados['palavra_franca']: texto += f" Palavra franca: {dados['palavra_franca']}."
+        if dados['expediente']: texto += f" Expediente: {dados['expediente']}."
+        if dados['palavra_visitantes']: texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
         
         tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
-        doc.add_paragraph(f"Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}. Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}. Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino.")
+        texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
+        texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
+        texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
         
+        # Adiciona o texto único justificado
+        paragrafo = doc.add_paragraph(texto)
+        paragrafo.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        
+        # Cidade/Data
         pd = doc.add_paragraph(f"{dados['cidade_estado']}, {dados['data_reuniao']}.")
         pd.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        doc.add_paragraph(f"\n\n__________________________________________________\n{dados['secretario_nome']} (Secretário)")
-        doc.add_paragraph(f"\n__________________________________________________\n{dados['pres_nome']} (Presidente)")
+        
+        # Assinaturas (Lauda para todos - 30 linhas)
+        doc.add_paragraph("\n\nAssinaturas dos Presentes:")
+        for _ in range(30):
+            doc.add_paragraph("___________________________________________________________________________________")
+
         return doc
 
     def gerar_pdf_nativo(dados):
@@ -326,50 +332,49 @@ elif authentication_status:
         pdf.add_page()
         pdf.set_font("Arial", size=12)
         pdf.set_margins(25, 25, 25)
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, f"Ata nº {dados['num_ata']}", ln=True, align="C")
-        pdf.ln(5)
-        pdf.set_font("Arial", size=12)
-        def add_p(txt):
-            x = pdf.get_x()
-            pdf.set_x(x + 12.5)
-            pdf.multi_cell(0, 7, txt, align="J")
-            pdf.ln(2)
         
-        add_p(f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}.")
-        add_p(f"Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP.")
-        add_p(f"A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros.")
-        add_p(f"A ata anterior foi lida e {dados['status_ata_ant']}.")
-        add_p(f"Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}.")
+        # Texto corrido
+        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+        texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+        texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
+        texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
+        texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
         
-        if dados['lista_visitantes_txt']: add_p(f"Presenças dos visitantes: {dados['lista_visitantes_txt']}.")
+        if dados['lista_visitantes_txt']: texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
         
         rec = formatar_valor_extenso(dados['receita'])
         des = formatar_valor_extenso(dados['despesa'])
         dec = formatar_valor_extenso(dados['decima'])
         sal = formatar_valor_extenso(dados['saldo'])
         tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o Tesoureiro"
-        add_p(f"Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}.")
+        texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
         
-        if dados['lista_visitantes_txt']: add_p("Agradecimentos aos visitantes.")
-        if dados['socioeconomico']: add_p(f"Levantamento Socioeconômico: {dados['socioeconomico']}.")
-        if dados['noticias_trabalhos']: add_p(f"Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}")
-        if dados['escala_visitas']: add_p(f"Novas nomeações (escala de visitas): {dados['escala_visitas']}")
-        if dados['palavra_franca']: add_p(f"Palavra franca: {dados['palavra_franca']}")
-        if dados['expediente']: add_p(f"Expediente: {dados['expediente']}")
-        if dados['palavra_visitantes']: add_p(f"Palavra dos Visitantes: {dados['palavra_visitantes']}")
+        if dados['lista_visitantes_txt']: texto += " Agradecimentos aos visitantes."
+        if dados['socioeconomico']: texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
+        if dados['noticias_trabalhos']: texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
+        if dados['escala_visitas']: texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
+        if dados['palavra_franca']: texto += f" Palavra franca: {dados['palavra_franca']}."
+        if dados['expediente']: texto += f" Expediente: {dados['expediente']}."
+        if dados['palavra_visitantes']: texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
         
         tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
-        add_p(f"Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}. Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}. Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino.")
+        texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
+        texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
+        texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
         
+        # Adiciona o bloco único de texto justificado
+        pdf.multi_cell(0, 7, texto, align="J")
+        
+        # Cidade/Data
         pdf.ln(10)
         pdf.cell(0, 10, f"{dados['cidade_estado']}, {dados['data_reuniao']}.", ln=True, align="R")
-        pdf.ln(15)
-        pdf.cell(0, 5, "__________________________________________________", ln=True, align="L")
-        pdf.cell(0, 5, f"{dados['secretario_nome']} (Secretário)", ln=True, align="L")
+        
+        # Assinaturas (Lauda para todos - 30 linhas)
         pdf.ln(10)
-        pdf.cell(0, 5, "__________________________________________________", ln=True, align="L")
-        pdf.cell(0, 5, f"{dados['pres_nome']} (Presidente)", ln=True, align="L")
+        pdf.cell(0, 10, "Assinaturas dos Presentes:", ln=True, align="L")
+        for _ in range(30):
+            pdf.cell(0, 8, "_______________________________________________________________________", ln=True, align="C")
+
         return bytes(pdf.output(dest='S'))
 
     # ==========================================================================
@@ -377,12 +382,10 @@ elif authentication_status:
     # ==========================================================================
     db = carregar_dados_cloud()
     
-    # Estado de Edição
     if 'dados_carregados' not in st.session_state:
         st.session_state.dados_carregados = {}
     dc = st.session_state.dados_carregados
 
-    # Configs Padrão
     dia_cfg = db['config'].get('dia_semana_reuniao', None)
     data_pad = obter_proxima_data(dia_cfg)
     hora_pad_str = db['config'].get('horario_padrao', '20:00')
@@ -391,7 +394,6 @@ elif authentication_status:
     loc_pad = db['config'].get('local_padrao', '')
     cid_pad = db['config'].get('cidade_padrao', '')
 
-    # --- Sidebar ---
     with st.sidebar:
         st.header("⚙️ Painel de Controle")
         
@@ -467,11 +469,9 @@ elif authentication_status:
         st.divider()
         if st.button("Forçar Atualização"): limpar_memoria(); st.rerun()
 
-    # --- UI Principal ---
     st.title("Gerador de Ata SSVP ✝️")
     st.caption("Conectado ao Arquivo Digital")
 
-    # Identificação
     val_num = int(dc.get('Numero', db['config']['ultima_ata'] + 1))
     val_data = data_pad
     if 'Data' in dc: 
@@ -495,7 +495,6 @@ elif authentication_status:
 
     st.divider()
     
-    # Chamada
     st.subheader("Chamada")
     cp1, cp2 = st.columns(2)
     def_pres = []
@@ -518,7 +517,6 @@ elif authentication_status:
 
     st.divider()
 
-    # Financeiro
     st.subheader("Tesouraria")
     cf1, cf2, cf3, cf4 = st.columns(4)
     saldo_ant = obter_saldo_anterior()
@@ -542,7 +540,6 @@ elif authentication_status:
     
     st.divider()
 
-    # Textos
     ce1, ce2, ce3 = st.columns(3)
     ipres = get_index_membro(dc.get('Presidente', db['config'].get('pres_padrao')), db['membros'])
     pres_nome = ce1.selectbox("Presidente", db['membros'], index=ipres)
