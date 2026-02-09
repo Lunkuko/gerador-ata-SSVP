@@ -141,7 +141,8 @@ def buscar_ata_para_edicao(num_ata_busca):
         ata = df_hist[df_hist['Busca_ID'] == termo]
         
         if not ata.empty: 
-            return ata.iloc[0].to_dict(), None
+            # === CORREÇÃO AQUI: Retorna 3 valores (Dados, DataFrame Debug, Mensagem) ===
+            return ata.iloc[0].to_dict(), None, "Ata carregada com sucesso!"
         else:
             return None, df_hist, f"Não encontrei '{termo}' na coluna '{col_num}'."
             
