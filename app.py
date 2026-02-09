@@ -14,7 +14,7 @@ import time
 # ==============================================================================
 # 1. CONFIGURAÇÃO INICIAL E CLASSES GLOBAIS
 # ==============================================================================
-st.set_page_config(page_title="Gerador de Ata SSVP (Seguro)", layout="wide", page_icon="✝️")
+st.set_page_config(page_title="Gerador de Ata Sociedade de São Vicente de Paulo (Seguro)", layout="wide", page_icon="✝️")
 
 # --- CLASSE PDF (Escopo Global para evitar erros) ---
 class PDF(FPDF):
@@ -259,12 +259,12 @@ def gerar_docx(dados):
     style.font.name = 'Arial'
     style.font.size = Pt(12)
     
-    texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
+    texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da Sociedade de São Vicente de Paulo"
     if eh_valido(dados['data_fundacao']): texto += f", fundada em {dados['data_fundacao']}"
     if eh_valido(dados['data_agregacao']): texto += f", agregada em {dados['data_agregacao']}"
     texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
     
-    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo."
     texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada por {dados['leitor_nome']}"
     texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
@@ -288,7 +288,7 @@ def gerar_docx(dados):
     
     tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if eh_valido(dados['tes_nome']) else "o tesoureiro"
     texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
-    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP, às {dados['hora_fim']}."
+    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da Sociedade de São Vicente de Paulo, às {dados['hora_fim']}."
     texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
     
     p = doc.add_paragraph(texto)
@@ -316,12 +316,12 @@ def gerar_pdf_nativo(dados):
     pdf.set_font("Arial", size=12)
     pdf.set_margins(25, 25, 25)
     
-    texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
+    texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da Sociedade de São Vicente de Paulo"
     if eh_valido(dados['data_fundacao']): texto += f", fundada em {dados['data_fundacao']}"
     if eh_valido(dados['data_agregacao']): texto += f", agregada em {dados['data_agregacao']}"
     texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
     
-    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo."
     texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada por {dados['leitor_nome']}"
     texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
@@ -345,7 +345,7 @@ def gerar_pdf_nativo(dados):
     
     tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if eh_valido(dados['tes_nome']) else "o tesoureiro"
     texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
-    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP, às {dados['hora_fim']}."
+    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da Sociedade de São Vicente de Paulo, às {dados['hora_fim']}."
     texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
     
     pdf.multi_cell(0, 7, texto, align="J")
@@ -454,7 +454,7 @@ if authentication_status:
         if st.button("Forçar Atualização"): limpar_memoria(); st.rerun()
 
     # === UI PRINCIPAL ===
-    st.title("Gerador de Ata SSVP ✝️")
+    st.title("Gerador de Ata Sociedade de São Vicente de Paulo ✝️")
     
     val_num = int(dc.get('Numero', db['config']['ultima_ata'] + 1))
     val_data = data_pad
