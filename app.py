@@ -265,7 +265,7 @@ def gerar_docx(dados):
     texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
     
     texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo."
-    texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada por {dados['leitor_nome']}"
+    texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada por {dados['leitor_nome']}."
     texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
     
@@ -295,7 +295,7 @@ def gerar_docx(dados):
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     pd = doc.add_paragraph(f"{dados['cidade_estado']}, {dados['data_reuniao']}.")
     pd.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    doc.add_paragraph("\n\nAssinaturas dos Presentes:")
+    #doc.add_paragraph("\n\nAssinaturas dos Presentes:")
     for _ in range(30): doc.add_paragraph("_"*85)
     return doc
 
@@ -510,8 +510,8 @@ if authentication_status:
     leit_nome = ce3.selectbox("Leitor", db['membros'])
 
     st.divider()
-    st_ata = st.radio("Ata Anterior", ["Aprovada sem ressalvas", "Aprovada com ressalvas"])
-    txt_res = st.text_input("Detalhes da ressalva") if st_ata == "Aprovada com ressalvas" else ""
+    st_ata = st.radio("ata Anterior", ["aprovada sem ressalvas", "aprovada com ressalvas"])
+    txt_res = st.text_input("Detalhes da ressalva") if st_ata == "aprovada com ressalvas" else ""
     
     st.divider()
     visit = st.text_area("Visitantes", value=dc.get('Visitantes',''))
