@@ -165,7 +165,6 @@ def atualizar_config_cloud(chave, valor):
     limpar_memoria()
 
     def salvar_lote_configs(dicionario_mudancas):
-    """Salva várias configurações de uma só vez para economizar cota da API."""
     try:
         # 1. Lê a planilha uma única vez
         df = conn.read(worksheet="Config")
