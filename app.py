@@ -265,9 +265,9 @@ def gerar_docx(dados):
     texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
     
     texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
-    texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
+    texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada por {dados['leitor_nome']}"
     texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
-    texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
+    texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
     
     if eh_valido(dados['lista_visitantes_txt']): texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
     
@@ -288,7 +288,7 @@ def gerar_docx(dados):
     
     tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if eh_valido(dados['tes_nome']) else "o tesoureiro"
     texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
-    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
+    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP, às {dados['hora_fim']}."
     texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
     
     p = doc.add_paragraph(texto)
@@ -302,45 +302,51 @@ def gerar_docx(dados):
 def gerar_pdf_nativo(dados):
     def limpar_texto(txt):
         if not eh_valido(txt): return ""
-        return str(txt).encode('latin-1', 'replace').decode('latin-1')
+        s = str(txt)
+        s = s.replace('\u201c', '"').replace('\u201d', '"') 
+        s = s.replace('\u2018', "'").replace('\u2019', "'") 
+        s = s.replace('\u2013', '-').replace('\u2014', '-')
+        s = s.replace('\u2022', '*') # Bullets
+        
+        return s.encode('latin-1', 'replace').decode('latin-1')
 
-    pdf = PDF()
+    pdf = PDF() 
     pdf.alias_nb_pages()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
     pdf.set_margins(25, 25, 25)
     
-    texto = f"Ata nº {limpar_texto(dados['num_ata'])} da reunião ordinária da Conferência {limpar_texto(dados['conf_nome'])} da SSVP"
-    if eh_valido(dados['data_fundacao']): texto += f", fundada em {limpar_texto(dados['data_fundacao'])}"
-    if eh_valido(dados['data_agregacao']): texto += f", agregada em {limpar_texto(dados['data_agregacao'])}"
-    texto += f", vinculada ao Conselho Particular {limpar_texto(dados['cons_particular'])}, área do Central de {limpar_texto(dados['cons_central'])}, realizada às {limpar_texto(dados['hora_inicio'])} do dia {limpar_texto(dados['data_reuniao'])} do Ano Temático: {limpar_texto(dados['ano_tematico'])}, na sala de reuniões {limpar_texto(dados['local'])}."
+    texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
+    if eh_valido(dados['data_fundacao']): texto += f", fundada em {dados['data_fundacao']}"
+    if eh_valido(dados['data_agregacao']): texto += f", agregada em {dados['data_agregacao']}"
+    texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
     
-    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {limpar_texto(dados['pres_nome'])}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
-    texto += f" A leitura espiritual foi tirada do(a) {limpar_texto(dados['leitura_fonte'])}, proclamada pelo(a) Cfd/Csc. {limpar_texto(dados['leitor_nome'])}, sendo refletida por alguns membros."
-    texto += f" A ata anterior foi lida e {limpar_texto(dados['status_ata_ant'])}."
-    texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {limpar_texto(dados['lista_presentes_txt'])}."
+    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+    texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada por {dados['leitor_nome']}"
+    texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
+    texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
     
-    if eh_valido(dados['lista_visitantes_txt']): texto += f" Presenças dos visitantes: {limpar_texto(dados['lista_visitantes_txt'])}."
+    if eh_valido(dados['lista_visitantes_txt']): texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
     
     rec = formatar_valor_extenso(dados['receita'])
     des = formatar_valor_extenso(dados['despesa'])
     dec = formatar_valor_extenso(dados['decima'])
     sal = formatar_valor_extenso(dados['saldo'])
-    tes = f"o(a) Tesoureiro(a) {limpar_texto(dados['tes_nome'])}" if eh_valido(dados['tes_nome']) else "o Tesoureiro"
+    tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if eh_valido(dados['tes_nome']) else "o Tesoureiro"
     texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
     
     if eh_valido(dados['lista_visitantes_txt']): texto += " Agradecimentos aos visitantes."
-    if eh_valido(dados['socioeconomico']): texto += f" Levantamento Socioeconômico: {limpar_texto(dados['socioeconomico'])}."
-    if eh_valido(dados['noticias_trabalhos']): texto += f" Notícias dos trabalhos da semana: {limpar_texto(dados['noticias_trabalhos'])}."
-    if eh_valido(dados['escala_visitas']): texto += f" Novas nomeações (escala de visitas): {limpar_texto(dados['escala_visitas'])}."
-    if eh_valido(dados['palavra_franca']): texto += f" Palavra franca: {limpar_texto(dados['palavra_franca'])}."
-    if eh_valido(dados['expediente']): texto += f" Expediente: {limpar_texto(dados['expediente'])}."
-    if eh_valido(dados['palavra_visitantes']): texto += f" Palavra dos Visitantes: {limpar_texto(dados['palavra_visitantes'])}."
+    if eh_valido(dados['socioeconomico']): texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
+    if eh_valido(dados['noticias_trabalhos']): texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
+    if eh_valido(dados['escala_visitas']): texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
+    if eh_valido(dados['palavra_franca']): texto += f" Palavra franca: {dados['palavra_franca']}."
+    if eh_valido(dados['expediente']): texto += f" Expediente: {dados['expediente']}."
+    if eh_valido(dados['palavra_visitantes']): texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
     
-    tes_col = f"o(a) tesoureiro(a) {limpar_texto(dados['tes_nome'])}" if eh_valido(dados['tes_nome']) else "o tesoureiro"
-    texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {limpar_texto(dados['musica_final'])}."
-    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {limpar_texto(dados['hora_fim'])}."
-    texto += f" Para constar, eu, {limpar_texto(dados['secretario_nome'])}, {limpar_texto(dados['secretario_cargo'])}, lavrei a presente ata, que dato e assino."
+    tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if eh_valido(dados['tes_nome']) else "o tesoureiro"
+    texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
+    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP, às {dados['hora_fim']}."
+    texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
     
     pdf.multi_cell(0, 7, texto, align="J")
     pdf.ln(10)
@@ -349,9 +355,17 @@ def gerar_pdf_nativo(dados):
     pdf.cell(0, 10, "Assinaturas dos Presentes:", ln=True, align="L")
     for _ in range(30): pdf.cell(0, 8, "_"*65, ln=True, align="C")
     
-    try: return pdf.output(dest='S').encode('latin-1', 'replace')
-    except: return b"%PDF-1.4 erro"
-
+    try:
+        pdf_content = pdf.output(dest='S')
+        
+        if isinstance(pdf_content, str):
+            return pdf_content.encode('latin-1', 'replace')
+        
+        return bytes(pdf_content)
+        
+    except Exception as e:
+        print(f"Erro PDF: {e}")
+        return b"%PDF-1.4 erro_geracao"
 # ==============================================================================
 # 5. AUTENTICAÇÃO E UI
 # ==============================================================================
@@ -565,8 +579,8 @@ if authentication_status:
         pdf_bytes = gerar_pdf_nativo(dados_ata)
         
         c1, c2 = st.columns(2)
-        c1.download_button("📄 PDF", pdf_bytes, f"Ata_{num_ata}.pdf", "application/pdf", type="primary")
-        c2.download_button("📝 Word", bio.getvalue(), f"Ata_{num_ata}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        c1.download_button("📄 Gerar PDF", pdf_bytes, f"Ata_{num_ata}.pdf", "application/pdf", type="primary")
+        c2.download_button("📝 Gerar documento Word", bio.getvalue(), f"Ata_{num_ata}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 elif authentication_status == False: st.error("Login incorreto")
 elif authentication_status == None: st.warning("Faça login")
