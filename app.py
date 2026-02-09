@@ -9,13 +9,19 @@ from fpdf import FPDF
 from num2words import num2words
 from datetime import datetime, date, timedelta, time
 import io
-import urllib.parse
 import time
 
 # ==============================================================================
-# 1. CONFIGURAÇÃO E CONEXÃO
+# 1. CONFIGURAÇÃO INICIAL E CLASSES GLOBAIS
 # ==============================================================================
 st.set_page_config(page_title="Gerador de Ata SSVP (Seguro)", layout="wide", page_icon="✝️")
+
+# --- CLASSE PDF (Definida no escopo global para evitar NameError) ---
+class PDF(FPDF):
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()}/{{nb}}', 0, 0, 'C')
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
@@ -24,14 +30,14 @@ except Exception as e:
     st.stop()
 
 # ==============================================================================
-# 2. SISTEMA DE LOGIN E SEGURANÇA
+# 2. FUNÇÕES DE NEGÓCIO (LOGICA) - ESCUPO GLOBAL
 # ==============================================================================
+
 def carregar_usuarios():
     """Lê os usuários da planilha 'Usuarios'."""
     try:
-        df = conn.read(worksheet="Usuarios", ttl=0) # ttl=0 garante leitura fresca
+        df = conn.read(worksheet="Usuarios", ttl=0)
         df = df.dropna(subset=['username']) 
-        
         credentials = {"usernames": {}}
         for _, row in df.iterrows():
             credentials["usernames"][row['username']] = {
@@ -63,6 +69,301 @@ def salvar_novo_usuario(username, name, password_hash, role):
     except Exception as e:
         return False, f"Erro ao salvar: {e}"
 
+@st.cache_data(ttl=3600)
+def carregar_dados_cloud():
+    tentativas = 0
+    max_tentativas = 3
+    while tentativas < max_tentativas:
+        try:
+            df_config = conn.read(worksheet="Config")
+            df_membros = conn.read(worksheet="Membros")
+            df_anos = conn.read(worksheet="Anos")
+            break 
+        except Exception as e:
+            erro_str = str(e)
+            if "429" in erro_str or "Quota exceeded" in erro_str:
+                tentativas += 1
+                time.sleep(2 ** tentativas)
+                if tentativas == max_tentativas:
+                    st.error("⚠️ Google sobrecarregado. Aguarde 1 min.")
+                    st.stop()
+            else:
+                st.error(f"Erro técnico: {e}")
+                st.stop()
+
+    if df_membros.empty: lista_membros = []
+    else: lista_membros = df_membros['Nome'].dropna().astype(str).tolist()
+        
+    if df_anos.empty: lista_anos = []
+    else: lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
+
+    config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
+    try: config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
+    except: config_dict['ultima_ata'] = 0
+
+    return {"config": config_dict, "membros": lista_membros, "anos": lista_anos}
+
+def obter_saldo_anterior():
+    try:
+        # ttl=0 garante saldo fresco
+        df_hist = conn.read(worksheet="Historico", ttl=0)
+        if not df_hist.empty and 'Saldo' in df_hist.columns and len(df_hist) > 0:
+            return float(df_hist['Saldo'].iloc[-1])
+    except: pass
+    return 0.0
+
+def buscar_ata_para_edicao(num_ata_busca):
+    """Busca ata com diagnóstico de erro."""
+    try:
+        # 1. Lê a planilha SEM CACHE (ttl=0)
+        df_hist = conn.read(worksheet="Historico", ttl=0)
+        
+        # 2. Limpa nomes das colunas
+        df_hist.columns = df_hist.columns.str.strip()
+        
+        # Tenta achar a coluna de número
+        col_num = None
+        possiveis = ["Numero", "Número", "Num", "Nº"]
+        for c in df_hist.columns:
+            if any(x in c for x in possiveis):
+                col_num = c
+                break
+        
+        if not col_num:
+            return None, df_hist, "Coluna de Número não encontrada!"
+
+        # 3. Cria coluna de comparação limpa (string, sem .0, sem espaço)
+        df_hist['Busca_ID'] = df_hist[col_num].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        termo = str(num_ata_busca).strip()
+        
+        # 4. Filtra
+        ata = df_hist[df_hist['Busca_ID'] == termo]
+        
+        if not ata.empty: 
+            return ata.iloc[0].to_dict(), None
+        else:
+            return None, df_hist, f"Não encontrei '{termo}' na coluna '{col_num}'."
+            
+    except Exception as e: 
+        return None, None, str(e)
+
+def limpar_memoria():
+    carregar_dados_cloud.clear()
+    st.cache_data.clear()
+
+def atualizar_config_cloud(chave, valor):
+    time.sleep(1) 
+    df = conn.read(worksheet="Config")
+    if chave in df['Chave'].values:
+        df.loc[df['Chave'] == chave, 'Valor'] = str(valor)
+    else:
+        new_row = pd.DataFrame([{'Chave': chave, 'Valor': str(valor)}])
+        df = pd.concat([df, new_row], ignore_index=True)
+    conn.update(worksheet="Config", data=df)
+    limpar_memoria()
+
+def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
+    time.sleep(1)
+    df = conn.read(worksheet=aba)
+    if acao == "adicionar":
+        if valor not in df[coluna].values:
+            new_row = pd.DataFrame([{coluna: valor}])
+            df = pd.concat([df, new_row], ignore_index=True)
+            conn.update(worksheet=aba, data=df)
+    elif acao == "remover":
+        df = df[df[coluna] != valor]
+        conn.update(worksheet=aba, data=df)
+    limpar_memoria()
+    return True
+
+def salvar_historico_cloud(dados):
+    try:
+        df_hist = conn.read(worksheet="Historico", ttl=0) # Lê fresco
+        df_hist.columns = df_hist.columns.str.strip()
+        
+        # Identifica coluna ID
+        col_num = "Numero" # Padrão
+        for c in df_hist.columns:
+            if "umero" in c or "úmero" in c or "Num" in c: col_num = c; break
+
+        # Normaliza coluna ID para busca
+        df_hist['Busca_ID'] = df_hist[col_num].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        num_atual = str(dados['num_ata']).strip()
+        
+        nova_linha = {
+            col_num: num_atual,
+            "Data": dados['data_reuniao'],
+            "Presidente": dados['pres_nome'],
+            "Secretario": dados['secretario_nome'],
+            "Leitura": dados['leitura_fonte'],
+            "Presentes": dados['lista_presentes_txt'],
+            "Ausencias": dados['ausencias'],
+            "Visitantes": dados['lista_visitantes_txt'],
+            "Receita": dados['receita'],
+            "Despesa": dados['despesa'],
+            "Saldo": dados['saldo'],
+            "Socioeconomico": dados['socioeconomico'],
+            "Noticias": dados['noticias_trabalhos'],
+            "Palavra_Franca": dados['palavra_franca']
+        }
+
+        if num_atual in df_hist['Busca_ID'].values:
+            # ATUALIZAÇÃO
+            idx = df_hist.index[df_hist['Busca_ID'] == num_atual].tolist()[0]
+            colunas_originais = [c for c in df_hist.columns if c != 'Busca_ID']
+            
+            for col, val in nova_linha.items():
+                if col in colunas_originais:
+                    df_hist.at[idx, col] = val
+            
+            df_atualizado = df_hist[colunas_originais]
+            msg_tipo = "atualizada"
+        else:
+            # CRIAÇÃO
+            df_nova = pd.DataFrame([nova_linha])
+            colunas_limpas = [c for c in df_hist.columns if c != 'Busca_ID']
+            df_atualizado = pd.concat([df_hist[colunas_limpas], df_nova], ignore_index=True)
+            msg_tipo = "criada"
+
+        conn.update(worksheet="Historico", data=df_atualizado)
+        return True, msg_tipo
+    except Exception as e:
+        st.error(f"Erro ao salvar: {e}")
+        return False, "erro"
+
+# --- Utilitários ---
+def obter_proxima_data(dia_alvo):
+    if dia_alvo is None or dia_alvo == "": return datetime.now().date()
+    try: dia_alvo = int(dia_alvo)
+    except: return datetime.now().date()
+    hoje = datetime.now().date()
+    dia_hoje = hoje.weekday()
+    if dia_hoje == dia_alvo: return hoje
+    dias_add = (dia_alvo - dia_hoje + 7) % 7
+    return hoje + timedelta(days=dias_add)
+
+def get_index_membro(nome, lista):
+    try: return lista.index(nome) if nome in lista else 0
+    except: return 0
+
+def formatar_valor_extenso(valor):
+    try:
+        extenso = num2words(valor, lang='pt_BR', to='currency')
+        return f"R$ {valor:,.2f} ({extenso})".replace(",", "X").replace(".", ",").replace("X", ".")
+    except: return "R$ 0,00"
+
+def formatar_data_br(data):
+    if isinstance(data, (datetime, date)): return data.strftime('%d/%m/%Y')
+    return str(data)
+
+# --- Geradores Docs ---
+def gerar_docx(dados):
+    doc = Document()
+    style = doc.styles['Normal']
+    style.font.name = 'Arial'
+    style.font.size = Pt(12)
+    
+    texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
+    if dados['data_fundacao']: texto += f", fundada em {dados['data_fundacao']}"
+    if dados['data_agregacao']: texto += f", agregada em {dados['data_agregacao']}"
+    texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+    
+    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+    texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
+    texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
+    texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
+    
+    if dados['lista_visitantes_txt']: texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
+    
+    rec = formatar_valor_extenso(dados['receita'])
+    des = formatar_valor_extenso(dados['despesa'])
+    dec = formatar_valor_extenso(dados['decima'])
+    sal = formatar_valor_extenso(dados['saldo'])
+    tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o Tesoureiro"
+    texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
+    
+    if dados['lista_visitantes_txt']: texto += " Agradecimentos aos visitantes."
+    if dados['socioeconomico']: texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
+    if dados['noticias_trabalhos']: texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
+    if dados['escala_visitas']: texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
+    if dados['palavra_franca']: texto += f" Palavra franca: {dados['palavra_franca']}."
+    if dados['expediente']: texto += f" Expediente: {dados['expediente']}."
+    if dados['palavra_visitantes']: texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
+    
+    tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
+    texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
+    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
+    texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
+    
+    p = doc.add_paragraph(texto)
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    
+    pd = doc.add_paragraph(f"{dados['cidade_estado']}, {dados['data_reuniao']}.")
+    pd.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    
+    doc.add_paragraph("\n\nAssinaturas dos Presentes:")
+    for _ in range(30): doc.add_paragraph("_"*85)
+    
+    return doc
+
+def gerar_pdf_nativo(dados):
+    # Chama a classe PDF definida globalmente
+    pdf = PDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.set_margins(25, 25, 25)
+    
+    texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP"
+    if dados['data_fundacao']: texto += f", fundada em {dados['data_fundacao']}"
+    if dados['data_agregacao']: texto += f", agregada em {dados['data_agregacao']}"
+    texto += f", vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
+    
+    texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
+    texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
+    texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
+    texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
+    
+    if dados['lista_visitantes_txt']: texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
+    
+    rec = formatar_valor_extenso(dados['receita'])
+    des = formatar_valor_extenso(dados['despesa'])
+    dec = formatar_valor_extenso(dados['decima'])
+    sal = formatar_valor_extenso(dados['saldo'])
+    tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o Tesoureiro"
+    texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
+    
+    if dados['lista_visitantes_txt']: texto += " Agradecimentos aos visitantes."
+    if dados['socioeconomico']: texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
+    if dados['noticias_trabalhos']: texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
+    if dados['escala_visitas']: texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
+    if dados['palavra_franca']: texto += f" Palavra franca: {dados['palavra_franca']}."
+    if dados['expediente']: texto += f" Expediente: {dados['expediente']}."
+    if dados['palavra_visitantes']: texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
+    
+    tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
+    texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
+    texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
+    texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
+    
+    pdf.multi_cell(0, 7, texto, align="J")
+    pdf.ln(10)
+    pdf.cell(0, 10, f"{dados['cidade_estado']}, {dados['data_reuniao']}.", ln=True, align="R")
+    pdf.ln(10)
+    pdf.cell(0, 10, "Assinaturas dos Presentes:", ln=True, align="L")
+    for _ in range(30): pdf.cell(0, 8, "_"*65, ln=True, align="C")
+    
+    # Retorno seguro (compatível com FPDF antigo e novo)
+    try:
+        return pdf.output(dest='S').encode('latin-1') 
+    except:
+        return pdf.output()
+
+# ==============================================================================
+# 3. AUTENTICAÇÃO E INTERFACE VISUAL
+# ==============================================================================
+
 # --- Configuração do Autenticador ---
 credentials_dict = carregar_usuarios()
 
@@ -77,11 +378,9 @@ authenticator = stauth.Authenticate(
     30 
 )
 
+# Tela de Login
 name, authentication_status, username = authenticator.login("main")
 
-# ==============================================================================
-# 3. VERIFICAÇÃO DE ACESSO
-# ==============================================================================
 if authentication_status == False:
     st.error("Usuário ou senha incorretos")
     
@@ -90,14 +389,16 @@ elif authentication_status == None:
 
 elif authentication_status:
     # ==========================================================================
-    # === ÁREA SEGURA ===
+    # === ÁREA LOGADA ===
     # ==========================================================================
     
+    # --- BARRA LATERAL (Logout e Admin) ---
     with st.sidebar:
         st.write(f"👤 Olá, **{name}**")
         authenticator.logout("Sair", "sidebar")
         st.divider()
         
+        # Gestão de Usuários (Apenas Admin)
         user_role = credentials_dict['usernames'][username].get('roles', ['editor'])[0]
         
         if user_role == 'admin':
@@ -126,269 +427,6 @@ elif authentication_status:
                                 st.error(msg)
 
     # ==========================================================================
-    # 4. FUNÇÕES DO SISTEMA (GERADOR DE ATA)
-    # ==========================================================================
-    
-    @st.cache_data(ttl=3600)
-    def carregar_dados_cloud():
-        tentativas = 0
-        max_tentativas = 3
-        while tentativas < max_tentativas:
-            try:
-                df_config = conn.read(worksheet="Config")
-                df_membros = conn.read(worksheet="Membros")
-                df_anos = conn.read(worksheet="Anos")
-                break 
-            except Exception as e:
-                erro_str = str(e)
-                if "429" in erro_str or "Quota exceeded" in erro_str:
-                    tentativas += 1
-                    time.sleep(2 ** tentativas)
-                    if tentativas == max_tentativas:
-                        st.error("⚠️ Google sobrecarregado. Aguarde 1 min.")
-                        st.stop()
-                else:
-                    st.error(f"Erro técnico: {e}")
-                    st.stop()
-
-        if df_membros.empty: lista_membros = []
-        else: lista_membros = df_membros['Nome'].dropna().astype(str).tolist()
-            
-        if df_anos.empty: lista_anos = []
-        else: lista_anos = df_anos['Ano'].dropna().astype(str).tolist()
-
-        config_dict = dict(zip(df_config['Chave'], df_config['Valor']))
-        try: config_dict['ultima_ata'] = int(config_dict.get('ultima_ata', 0))
-        except: config_dict['ultima_ata'] = 0
-
-        return {"config": config_dict, "membros": lista_membros, "anos": lista_anos}
-
-    def obter_saldo_anterior():
-        try:
-            # ttl=0 garante que pegamos o saldo da ata que acabou de ser salva
-            df_hist = conn.read(worksheet="Historico", ttl=0)
-            if not df_hist.empty and 'Saldo' in df_hist.columns and len(df_hist) > 0:
-                return float(df_hist['Saldo'].iloc[-1])
-        except: pass
-        return 0.0
-
-    def buscar_ata_para_edicao(num_ata_busca):
-        """Busca ata forçando atualização do cache e limpando formatação."""
-        try:
-            # 1. Lê a planilha sem cache (ttl=0)
-            df_hist = conn.read(worksheet="Historico", ttl=0)
-            
-            # 2. Limpeza de dados (Converte para String e remove .0 se houver)
-            # Ex: "1296.0" vira "1296"
-            df_hist['Numero'] = df_hist['Numero'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            
-            # 3. Limpa o termo de busca também
-            termo_busca = str(num_ata_busca).strip()
-            
-            # 4. Filtra
-            ata = df_hist[df_hist['Numero'] == termo_busca]
-            
-            if not ata.empty: 
-                return ata.iloc[0].to_dict()
-            return None
-        except Exception as e: 
-            st.error(f"Erro na busca: {e}")
-            return None
-
-    def limpar_memoria():
-        carregar_dados_cloud.clear()
-        st.cache_data.clear()
-
-    def atualizar_config_cloud(chave, valor):
-        time.sleep(1) 
-        df = conn.read(worksheet="Config")
-        if chave in df['Chave'].values:
-            df.loc[df['Chave'] == chave, 'Valor'] = str(valor)
-        else:
-            new_row = pd.DataFrame([{'Chave': chave, 'Valor': str(valor)}])
-            df = pd.concat([df, new_row], ignore_index=True)
-        conn.update(worksheet="Config", data=df)
-        limpar_memoria()
-
-    def gerenciar_lista_cloud(aba, coluna, valor, acao="adicionar"):
-        time.sleep(1)
-        df = conn.read(worksheet=aba)
-        if acao == "adicionar":
-            if valor not in df[coluna].values:
-                new_row = pd.DataFrame([{coluna: valor}])
-                df = pd.concat([df, new_row], ignore_index=True)
-                conn.update(worksheet=aba, data=df)
-        elif acao == "remover":
-            df = df[df[coluna] != valor]
-            conn.update(worksheet=aba, data=df)
-        limpar_memoria()
-        return True
-
-    def salvar_historico_cloud(dados):
-        try:
-            df_hist = conn.read(worksheet="Historico", ttl=0) # Lê dados frescos
-            
-            # Normaliza a coluna Numero para comparação
-            df_hist['Numero'] = df_hist['Numero'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            num_atual = str(dados['num_ata']).strip()
-            
-            nova_linha = {
-                "Numero": num_atual,
-                "Data": dados['data_reuniao'],
-                "Presidente": dados['pres_nome'],
-                "Secretario": dados['secretario_nome'],
-                "Leitura": dados['leitura_fonte'],
-                "Presentes": dados['lista_presentes_txt'],
-                "Ausencias": dados['ausencias'],
-                "Visitantes": dados['lista_visitantes_txt'],
-                "Receita": dados['receita'],
-                "Despesa": dados['despesa'],
-                "Saldo": dados['saldo'],
-                "Socioeconomico": dados['socioeconomico'],
-                "Noticias": dados['noticias_trabalhos'],
-                "Palavra_Franca": dados['palavra_franca']
-            }
-
-            if num_atual in df_hist['Numero'].values:
-                idx = df_hist.index[df_hist['Numero'] == num_atual].tolist()[0]
-                for col, val in nova_linha.items():
-                    df_hist.at[idx, col] = val
-                df_atualizado = df_hist
-                msg_tipo = "atualizada"
-            else:
-                df_nova = pd.DataFrame([nova_linha])
-                df_atualizado = pd.concat([df_hist, df_nova], ignore_index=True)
-                msg_tipo = "criada"
-
-            conn.update(worksheet="Historico", data=df_atualizado)
-            return True, msg_tipo
-        except Exception as e:
-            st.error(f"Erro ao salvar: {e}")
-            return False, "erro"
-
-    # --- Utilitários ---
-    def obter_proxima_data(dia_alvo):
-        if dia_alvo is None or dia_alvo == "": return datetime.now().date()
-        try: dia_alvo = int(dia_alvo)
-        except: return datetime.now().date()
-        hoje = datetime.now().date()
-        dia_hoje = hoje.weekday()
-        if dia_hoje == dia_alvo: return hoje
-        dias_add = (dia_alvo - dia_hoje + 7) % 7
-        return hoje + timedelta(days=dias_add)
-
-    def get_index_membro(nome, lista):
-        try: return lista.index(nome) if nome in lista else 0
-        except: return 0
-
-    def formatar_valor_extenso(valor):
-        try:
-            extenso = num2words(valor, lang='pt_BR', to='currency')
-            return f"R$ {valor:,.2f} ({extenso})".replace(",", "X").replace(".", ",").replace("X", ".")
-        except: return "R$ 0,00"
-
-    def formatar_data_br(data):
-        if isinstance(data, (datetime, date)): return data.strftime('%d/%m/%Y')
-        if not data or str(data) == "nan": return ""
-        return str(data)
-
-    # --- Geradores Docs (SEM ASSINATURAS FIXAS, COM 30 LINHAS) ---
-    def gerar_docx(dados):
-        doc = Document()
-        style = doc.styles['Normal']
-        style.font.name = 'Arial'
-        style.font.size = Pt(12)
-        
-        # Constrói o texto corrido (sem parágrafos extras)
-        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
-        texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
-        texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
-        texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
-        texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
-        
-        if dados['lista_visitantes_txt']: texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
-        
-        rec = formatar_valor_extenso(dados['receita'])
-        des = formatar_valor_extenso(dados['despesa'])
-        dec = formatar_valor_extenso(dados['decima'])
-        sal = formatar_valor_extenso(dados['saldo'])
-        tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o Tesoureiro"
-        texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
-        
-        if dados['lista_visitantes_txt']: texto += " Agradecimentos aos visitantes."
-        if dados['socioeconomico']: texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
-        if dados['noticias_trabalhos']: texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
-        if dados['escala_visitas']: texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
-        if dados['palavra_franca']: texto += f" Palavra franca: {dados['palavra_franca']}."
-        if dados['expediente']: texto += f" Expediente: {dados['expediente']}."
-        if dados['palavra_visitantes']: texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
-        
-        tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
-        texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
-        texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
-        texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
-        
-        paragrafo = doc.add_paragraph(texto)
-        paragrafo.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        
-        pd = doc.add_paragraph(f"{dados['cidade_estado']}, {dados['data_reuniao']}.")
-        pd.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        
-        doc.add_paragraph("\n\nAssinaturas dos Presentes:")
-        for _ in range(30):
-            doc.add_paragraph("___________________________________________________________________________________")
-
-        return doc
-
-    def gerar_pdf_nativo(dados):
-        pdf = PDF()
-        pdf.alias_nb_pages()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        pdf.set_margins(25, 25, 25)
-        
-        # Texto corrido
-        texto = f"Ata nº {dados['num_ata']} da reunião ordinária da Conferência {dados['conf_nome']} da SSVP, fundada em {dados['data_fundacao']}, agregada em {dados['data_agregacao']}, vinculada ao Conselho Particular {dados['cons_particular']}, área do Central de {dados['cons_central']}, realizada às {dados['hora_inicio']} do dia {dados['data_reuniao']} do Ano Temático: {dados['ano_tematico']}, na sala de reuniões {dados['local']}."
-        texto += f" Louvado seja nosso Senhor Jesus Cristo! A reunião foi iniciada pelo Presidente, {dados['pres_nome']}, com as orações regulamentares da Sociedade de São Vicente de Paulo-SSVP."
-        texto += f" A leitura espiritual foi tirada do(a) {dados['leitura_fonte']}, proclamada pelo(a) Cfd/Csc. {dados['leitor_nome']}, sendo refletida por alguns membros."
-        texto += f" A ata anterior foi lida e {dados['status_ata_ant']}."
-        texto += f" Em seguida foi feita a chamada, com a presença dos Confrades e Consócias: {dados['lista_presentes_txt']}."
-        
-        if dados['lista_visitantes_txt']: texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
-        
-        rec = formatar_valor_extenso(dados['receita'])
-        des = formatar_valor_extenso(dados['despesa'])
-        dec = formatar_valor_extenso(dados['decima'])
-        sal = formatar_valor_extenso(dados['saldo'])
-        tes = f"o(a) Tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o Tesoureiro"
-        texto += f" Movimento do Caixa: em seguida {tes} apresentou o estado do caixa: Receita total: {rec}; Despesa total: {des}; Décima semanal: {dec}; Saldo final: {sal}."
-        
-        if dados['lista_visitantes_txt']: texto += " Agradecimentos aos visitantes."
-        if dados['socioeconomico']: texto += f" Levantamento Socioeconômico: {dados['socioeconomico']}."
-        if dados['noticias_trabalhos']: texto += f" Notícias dos trabalhos da semana: {dados['noticias_trabalhos']}."
-        if dados['escala_visitas']: texto += f" Novas nomeações (escala de visitas): {dados['escala_visitas']}."
-        if dados['palavra_franca']: texto += f" Palavra franca: {dados['palavra_franca']}."
-        if dados['expediente']: texto += f" Expediente: {dados['expediente']}."
-        if dados['palavra_visitantes']: texto += f" Palavra dos Visitantes: {dados['palavra_visitantes']}."
-        
-        tes_col = f"o(a) tesoureiro(a) {dados['tes_nome']}" if dados['tes_nome'] else "o tesoureiro"
-        texto += f" Coleta Secreta: em seguida {tes_col} fez a coleta secreta, enquanto os demais cantavam {dados['musica_final']}."
-        texto += f" Nada mais havendo a tratar, a reunião foi encerrada com as orações finais regulamentares da SSVP e com a oração para Canonização do Beato Frederico Ozanam, às {dados['hora_fim']}."
-        texto += f" Para constar, eu, {dados['secretario_nome']}, {dados['secretario_cargo']}, lavrei a presente ata, que dato e assino."
-        
-        pdf.multi_cell(0, 7, texto, align="J")
-        
-        pdf.ln(10)
-        pdf.cell(0, 10, f"{dados['cidade_estado']}, {dados['data_reuniao']}.", ln=True, align="R")
-        
-        pdf.ln(10)
-        pdf.cell(0, 10, "Assinaturas dos Presentes:", ln=True, align="L")
-        for _ in range(30):
-            pdf.cell(0, 8, "_______________________________________________________________________", ln=True, align="C")
-
-        return bytes(pdf.output(dest='S'))
-
-    # ==========================================================================
     # 5. INTERFACE PRINCIPAL (UI)
     # ==========================================================================
     db = carregar_dados_cloud()
@@ -412,13 +450,17 @@ elif authentication_status:
             st.info("Digite o nº para editar.")
             nb = st.number_input("Nº Ata", min_value=1, step=1, key="find_ata")
             if st.button("Carregar"):
-                d_old = buscar_ata_para_edicao(nb)
+                d_old, debug_df, msg = buscar_ata_para_edicao(nb)
                 if d_old:
                     st.session_state.dados_carregados = d_old
                     st.toast(f"Ata {nb} carregada!")
                     time.sleep(1)
                     st.rerun()
-                else: st.error("Não encontrada.")
+                else: 
+                    st.error(msg)
+                    if debug_df is not None:
+                        st.caption("📋 Dados encontrados na planilha (Debug):")
+                        st.dataframe(debug_df[['Numero', 'Data', 'Saldo']].head())
 
         with st.expander("👔 Cargos"):
             ip = get_index_membro(db['config'].get('pres_padrao'), db['membros'])
@@ -453,6 +495,7 @@ elif authentication_status:
             cce = st.text_input("Cons. Cent.", db['config'].get('cons_central',''))
             dfu = st.text_input("Dt Fund.", db['config'].get('data_fundacao',''))
             dag = st.text_input("Dt Agreg.", db['config'].get('data_agregacao',''))
+            
             if st.button("Salvar Configs"):
                 atualizar_config_cloud('nome_conf', cn)
                 atualizar_config_cloud('horario_padrao', ch)
@@ -658,9 +701,11 @@ elif authentication_status:
         doc = gerar_docx(dados_ata)
         bio = io.BytesIO()
         doc.save(bio)
-        pdf = gerar_pdf_nativo(dados_ata)
+        
+        # Gerar PDF (agora seguro)
+        pdf_bytes = gerar_pdf_nativo(dados_ata)
         
         st.success(f"Sucesso! Saldo Final: R$ {saldo:.2f}")
         c_down1, c_down2 = st.columns(2)
-        c_down1.download_button("📄 Baixar PDF", pdf, f"Ata_{num_ata}.pdf", "application/pdf", type="primary")
+        c_down1.download_button("📄 Baixar PDF", pdf_bytes, f"Ata_{num_ata}.pdf", "application/pdf", type="primary")
         c_down2.download_button("📝 Baixar Word", bio.getvalue(), f"Ata_{num_ata}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
