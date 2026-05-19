@@ -270,7 +270,7 @@ def gerar_docx(dados):
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
     
     if eh_valido(dados['ausencias']) and dados['ausencias'] != "Não houve.":
-        texto += f" Registrou-se as seguintes ausências com justificativas: {dados['ausencias']}."
+        texto += f" {dados['ausencias']}"
     
     if eh_valido(dados['lista_visitantes_txt']): texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
     
@@ -330,7 +330,7 @@ def gerar_pdf_nativo(dados):
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
     
     if eh_valido(dados['ausencias']) and dados['ausencias'] != "Não houve.":
-        texto += f" Registrou-se as seguintes ausências com justificativas: {dados['ausencias']}."
+        texto += f" {dados['ausencias']}"
 
     if eh_valido(dados['lista_visitantes_txt']): texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
     
@@ -551,9 +551,33 @@ if authentication_status:
     sec_nom = st.selectbox("Nome Secretário", db['membros'], index=idx_s)
 
     st.divider()
-    if st.button("💾 Gerar/Salvar Ata", type="primary"):
-        ls_aus = [f"{m} ({motivos.get(m,'').strip() or 'Justificado'})" if m in motivos else m for m in ausentes]
+    iif st.button("💾 Gerar/Salvar Ata", type="primary"):
         st_fin = f"{st_ata}: {txt_res}" if txt_res else st_ata
+        
+        # 1. Ordenar presenças alfabeticamente
+        presentes_ordenados = sorted(presentes)
+        
+        # 2. Ordenar ausências alfabeticamente e separar as categorias
+        ausentes_ordenados = sorted(ausentes)
+        lista_faltas = []
+        lista_justificadas = []
+        
+        for m in ausentes_ordenados:
+            if m in justif:
+                motivo = motivos.get(m, "").strip()
+                texto_motivo = f"{m} ({motivo})" if motivo else f"{m} (Justificado)"
+                lista_justificadas.append(texto_motivo)
+            else:
+                lista_faltas.append(m)
+                
+        # 3. Montar a string final das ausências
+        partes_ausencias = []
+        if lista_justificadas:
+            partes_ausencias.append("Ausências justificadas: " + ", ".join(lista_justificadas))
+        if lista_faltas:
+            partes_ausencias.append("Faltas: " + ", ".join(lista_faltas))
+            
+        str_ausencias_final = "; ".join(partes_ausencias) + "." if partes_ausencias else "Não houve."
         
         dados_ata = {
             'num_ata': str(num_ata), 'conf_nome': db['config'].get('nome_conf',''),
@@ -563,7 +587,7 @@ if authentication_status:
             'ano_tematico': ano_tem, 'data_reuniao': formatar_data_br(dt_reuniao),
             'hora_inicio': hr_ini.strftime('%H:%M'), 'local': local_r, 'pres_nome': pres_nome,
             'leitura_fonte': font_l, 'leitor_nome': leit_nome, 'status_ata_ant': st_fin,
-            'lista_presentes_txt': ", ".join(presentes), 'ausencias': ", ".join(ls_aus) or "Não houve.",
+            'lista_presentes_txt': ", ".join(presentes_ordenados), 'ausencias': str_ausencias_final,
             'lista_visitantes_txt': visit.replace("\n", ", ") if visit else "",
             'receita': rec, 'despesa': des, 'decima': dec, 'saldo': saldo,
             'tes_nome': tes_nome, 'socioeconomico': socio, 'noticias_trabalhos': notic,
