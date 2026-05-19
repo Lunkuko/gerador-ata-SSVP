@@ -551,7 +551,7 @@ if authentication_status:
     sec_nom = st.selectbox("Nome Secretário", db['membros'], index=idx_s)
 
     st.divider()
-    iif st.button("💾 Gerar/Salvar Ata", type="primary"):
+    if st.button("💾 Gerar/Salvar Ata", type="primary"):
         st_fin = f"{st_ata}: {txt_res}" if txt_res else st_ata
         
         # 1. Ordenar presenças alfabeticamente
