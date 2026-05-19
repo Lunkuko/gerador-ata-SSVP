@@ -270,7 +270,7 @@ def gerar_docx(dados):
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
     
     if eh_valido(dados['ausencias']) and dados['ausencias'] != "Não houve.":
-    texto += f" Registrou-se as seguintes ausências com justificativas: {dados['ausencias']}."
+        texto += f" Registrou-se as seguintes ausências com justificativas: {dados['ausencias']}."
     
     if eh_valido(dados['lista_visitantes_txt']): texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
     
@@ -330,7 +330,7 @@ def gerar_pdf_nativo(dados):
     texto += f" Em seguida foi feita a chamada, com a presença dos Confrades, Consócias e Aspirantes: {dados['lista_presentes_txt']}."
     
     if eh_valido(dados['ausencias']) and dados['ausencias'] != "Não houve.":
-    texto += f" Registrou-se as seguintes ausências com justificativas: {dados['ausencias']}."
+        texto += f" Registrou-se as seguintes ausências com justificativas: {dados['ausencias']}."
 
     if eh_valido(dados['lista_visitantes_txt']): texto += f" Presenças dos visitantes: {dados['lista_visitantes_txt']}."
     
