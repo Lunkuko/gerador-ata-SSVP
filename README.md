@@ -60,5 +60,5 @@ Certifique-se de ter o [Python](https://www.python.org/) instalado.
 
 ### 2. Clonar o Repositório
 ```bash
-git clone [https://github.com/seu-usuario/gerador-ata-ssvp.git](https://github.com/seu-usuario/gerador-ata-ssvp.git)
+git clone https://github.com/Lunkuko/gerador-ata-SSVP.git
 cd gerador-ata-ssvp
